@@ -90,7 +90,7 @@ Read [references/commands.md](references/commands.md) before choosing commands.
   (`search channels`, `search people`) and use the ID. Reuse the `channel_id`
   from `--json` output. Pasted Slack URLs also work; `--permalink` targets one
   message or its thread.
-- Confirm before anything visible to others: send, edit, react, draft, schedule,
+- Confirm before anything visible to others: send, edit, react, unreact, draft, schedule,
   upload, any `usergroups` write. Show target and text, get a yes, then run. Add
   `--yes` to `usergroups` writes only after that confirmation.
 - Unsure of the target or text? Run the same command with `--dry-run --json`

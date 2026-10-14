@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { deleteMessage, fetchMessage } from './message.ts';
+import { deleteMessage, fetchMessage, removeReaction } from './message.ts';
 import type { SlackClient } from './slack-client.ts';
 
 function createMockClient(
@@ -208,5 +208,54 @@ describe('deleteMessage', () => {
     const client = { deleteMessage: () => Promise.reject(lookalike) };
 
     await expect(deleteMessage(client, 'C123', '1.1')).rejects.toBe(lookalike);
+  });
+});
+
+describe('removeReaction', () => {
+  it('removes the reaction and reports it was not already gone', async () => {
+    const calls: Array<[string, string, string]> = [];
+    const client = {
+      removeReaction: (channel: string, ts: string, name: string) => {
+        calls.push([channel, ts, name]);
+        return Promise.resolve({ ok: true });
+      },
+    };
+
+    const result = await removeReaction(client, 'C123', '1.1', 'eyes');
+
+    expect(calls).toEqual([['C123', '1.1', 'eyes']]);
+    expect(result).toEqual({ channel_id: 'C123', ts: '1.1', emoji: 'eyes', removed: true, already_removed: false });
+  });
+
+  it('treats no_reaction as already removed, so a retry succeeds', async () => {
+    const client = { removeReaction: () => Promise.reject(slackRefusal('no_reaction')) };
+
+    const result = await removeReaction(client, 'C123', '1.1', 'eyes');
+
+    expect(result).toEqual({ channel_id: 'C123', ts: '1.1', emoji: 'eyes', removed: false, already_removed: true });
+  });
+
+  it.each(['message_not_found', 'channel_not_found', 'invalid_name', 'not_in_channel', 'missing_scope'])(
+    'rethrows %s unchanged',
+    async (code) => {
+      const refusal = slackRefusal(code);
+      const client = { removeReaction: () => Promise.reject(refusal) };
+
+      await expect(removeReaction(client, 'C123', '1.1', 'eyes')).rejects.toBe(refusal);
+    },
+  );
+
+  it('rethrows a failure that carries no Slack answer', async () => {
+    const network = new Error('socket hang up');
+    const client = { removeReaction: () => Promise.reject(network) };
+
+    await expect(removeReaction(client, 'C123', '1.1', 'eyes')).rejects.toBe(network);
+  });
+
+  it('does not mistake no_reaction in the text alone for the Slack code', async () => {
+    const lookalike = new Error('Slack API error: no_reaction');
+    const client = { removeReaction: () => Promise.reject(lookalike) };
+
+    await expect(removeReaction(client, 'C123', '1.1', 'eyes')).rejects.toBe(lookalike);
   });
 });

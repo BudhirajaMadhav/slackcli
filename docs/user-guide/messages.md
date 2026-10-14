@@ -1,17 +1,17 @@
 # Send, reply, edit, delete and react to Slack messages
 
-`slackcli messages` sends, edits, deletes, and reacts to messages, creates, lists,
+`slackcli messages` sends, edits, deletes, reacts to and unreacts from messages, creates, lists,
 sends, and deletes drafts, and schedules messages for later.
 
 Every subcommand accepts `--workspace <id|name>`.
 
 ## Previewing a write (`--dry-run`)
 
-`send`, `edit`, `delete`, `react`, `draft`, `send-draft`, `delete-draft`, `schedule` and
+`send`, `edit`, `delete`, `react`, `unreact`, `draft`, `send-draft`, `delete-draft`, `schedule` and
 `delete-scheduled` take `--dry-run`. The message is resolved and checked as for a real send — the text
 from `--message` or `--message-file`, parsed `--blocks`, the `--file` to
 upload, the target from `--recipient-id`, `--thread-ts` or `--permalink` — and
-printed instead of sent. `send`, `edit`, `react`, `draft` and `schedule` have no
+printed instead of sent. `send`, `edit`, `react`, `unreact`, `draft` and `schedule` have no
 confirmation prompt, so this is the way to check one first:
 
 ```bash
@@ -287,6 +287,55 @@ slackcli messages react --permalink="https://myteam.slack.com/archives/C12345678
 
 `--emoji` takes the name without colons: `+1`/`thumbsup` 👍, `heart` ❤️,
 `fire` 🔥, `eyes` 👀, `tada` 🎉, `rocket` 🚀. Custom workspace emoji work too.
+
+`--json` prints the reaction's identity, with no `ok` key (without it the output
+is the usual text line):
+
+```json
+{ "channel_id": "C1234567890", "ts": "1234567890.123456", "emoji": "heart" }
+```
+
+Reacting twice is not retry-safe: Slack's `already_reacted` exits 1 with that
+code in `slack_error`. With `--json`, a workspace-mismatch warning goes to stderr.
+
+## `messages unreact`
+
+```bash
+slackcli messages unreact --channel-id=C1234567890 --timestamp=1234567890.123456 --emoji=eyes
+slackcli messages unreact --permalink="https://myteam.slack.com/archives/C1234567890/p1234567890123456" --emoji=eyes --json
+```
+
+Removes an emoji reaction with `reactions.remove`; it is the inverse of
+`messages react`. Name the message and the emoji exactly as for `react`
+(`--emoji` is the name without colons). Like `react`, it acts immediately with
+no confirmation prompt, and `--dry-run` shows the target and the emoji without
+removing anything.
+
+Slack removes only the reaction of the identity making the call, so a reaction
+added with a user profile (user token or browser session) can be cleared only
+with that same profile; a bot token cannot clear it.
+
+`--json` prints the reaction's identity:
+
+```json
+{
+  "channel_id": "C1234567890",
+  "ts": "1234567890.123456",
+  "emoji": "eyes",
+  "removed": true,
+  "already_removed": false
+}
+```
+
+The command is safe to retry, like `messages delete`. When Slack answers
+`no_reaction` (you have no such reaction on that message) it still exits 0, with
+`removed: false` and `already_removed: true`, and the text output says there was
+no reaction from you to remove rather than claiming a removal. Every other
+refusal exits 1 with Slack's code in `slack_error`: for example
+`message_not_found`, `channel_not_found` or `invalid_name`.
+
+With `--json`, a workspace-mismatch warning for a `--permalink` from another
+workspace goes to stderr, so stdout carries only the JSON object.
 
 ## `messages draft`
 

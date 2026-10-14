@@ -34,6 +34,7 @@ const SLACK_CODE_MAP: Readonly<Record<string, ErrorCode>> = {
   user_not_found: 'not_found',
   users_not_found: 'not_found',
   message_not_found: 'not_found',
+  no_reaction: 'not_found',
   thread_not_found: 'not_found',
   file_not_found: 'not_found',
   file_deleted: 'not_found',

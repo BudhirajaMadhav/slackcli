@@ -53,6 +53,10 @@ class TestSlackClient extends SlackClient {
       };
     }
 
+    if (method === 'reactions.remove') {
+      return { ok: true };
+    }
+
     if (method === 'chat.delete') {
       return { ok: true, channel: params.channel, ts: params.ts };
     }
@@ -674,6 +678,18 @@ describe('SlackClient.deleteMessage', () => {
 
     expect(client.calls).toEqual([
       { method: 'chat.delete', params: { channel: 'C123', ts: '1234567890.123456' } },
+    ]);
+  });
+});
+
+describe('SlackClient.removeReaction', () => {
+  it('calls reactions.remove with the channel, timestamp and emoji name', async () => {
+    const client = new TestSlackClient();
+
+    await client.removeReaction('C123', '1234567890.123456', 'eyes');
+
+    expect(client.calls).toEqual([
+      { method: 'reactions.remove', params: { channel: 'C123', timestamp: '1234567890.123456', name: 'eyes' } },
     ]);
   });
 });

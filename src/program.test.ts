@@ -32,6 +32,7 @@ const SLACK_WRITES = new Set([
   'slackcli messages edit',
   'slackcli messages delete',
   'slackcli messages react',
+  'slackcli messages unreact',
   'slackcli messages draft',
   'slackcli messages send-draft',
   'slackcli messages delete-draft',

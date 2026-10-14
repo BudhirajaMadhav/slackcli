@@ -59,3 +59,31 @@ export async function deleteMessage(
     return { channel_id: channelId, ts: timestamp, deleted: false, already_deleted: true };
   }
 }
+
+export interface RemovedReactionResult {
+  channel_id: string;
+  ts: string;
+  emoji: string;
+  removed: boolean;
+  already_removed: boolean;
+}
+
+/**
+ * Remove the caller's own reaction from a message. Idempotent: Slack's
+ * no_reaction is a success with `removed: false, already_removed: true`, so a
+ * retry is safe. Every other failure is rethrown.
+ */
+export async function removeReaction(
+  client: Pick<SlackClient, 'removeReaction'>,
+  channelId: string,
+  timestamp: string,
+  emoji: string,
+): Promise<RemovedReactionResult> {
+  try {
+    await client.removeReaction(channelId, timestamp, emoji);
+    return { channel_id: channelId, ts: timestamp, emoji, removed: true, already_removed: false };
+  } catch (error) {
+    if ((error as { slackData?: { error?: unknown } })?.slackData?.error !== 'no_reaction') throw error;
+    return { channel_id: channelId, ts: timestamp, emoji, removed: false, already_removed: true };
+  }
+}

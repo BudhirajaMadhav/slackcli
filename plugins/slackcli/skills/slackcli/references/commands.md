@@ -21,10 +21,10 @@ Condensed from https://github.com/shaharia-lab/slackcli/tree/main/docs/user-guid
   name, `T…` ID, or workspace name. Ambiguous name: command stops, pass the profile.
 - IDs accept Slack URLs (channel, DM, user, canvas, file). Timestamps accept
   `p1234567890123456`, `1234567890123456`, `1234567890.123456`.
-- `--permalink <url>` replaces channel + timestamp on `messages send|react|edit|delete|draft`,
+- `--permalink <url>` replaces channel + timestamp on `messages send|react|unreact|edit|delete|draft`,
   `conversations read|get|mark-read`. A reply link targets the parent thread
   (`get` and `mark-read` use the linked message's own timestamp).
-- `--dry-run` on every Slack write (`messages send|edit|delete|react|draft|send-draft|delete-draft|schedule|delete-scheduled`,
+- `--dry-run` on every Slack write (`messages send|edit|delete|react|unreact|draft|send-draft|delete-draft|schedule|delete-scheduled`,
   `conversations members add|remove`, `join`, `leave`, `mark-read`, every `usergroups` write):
   resolves and validates, writes nothing, never prompts or needs `--yes`, exits 0.
   With `--json`: `{dry_run: true, action, workspace: {name,id,profile}, target: {kind,id?,name?,ts?,thread_ts?}, payload}`.
@@ -77,7 +77,8 @@ messages send --recipient-id=<C…|U…|url|"#name"|@handle|email> (--message=T 
 messages send --permalink=URL --message=T          # reply in that thread
 messages edit (--channel-id=C --timestamp=TS | --permalink=URL) (--message=T | --message-file=F|-) [--json]
 messages delete (--channel-id=C --timestamp=TS | --permalink=URL) [--yes] [--json]   # chat.delete; retry-safe
-messages react (--channel-id=C --timestamp=TS | --permalink=URL) --emoji=NAME
+messages react (--channel-id=C --timestamp=TS | --permalink=URL) --emoji=NAME [--json]
+messages unreact (--channel-id=C --timestamp=TS | --permalink=URL) --emoji=NAME [--json]   # reactions.remove, your own reaction only; retry-safe
 messages draft --recipient-id=C (--message=T | --message-file=F|-) [--json]    # browser auth only
 messages send-draft Dr… [--yes] [--json]                                     # post, then delete draft
 messages delete-draft Dr… [--yes] [--json]                                   # discard draft

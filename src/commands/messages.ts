@@ -29,7 +29,7 @@ import { InvalidInputError, NotFoundError } from '../lib/cli-errors.ts';
 import { resolveIdentifier } from '../lib/name-resolver.ts';
 import { resolveMessageText } from '../lib/message-input.ts';
 import { parseScheduleTime } from '../lib/schedule-time.ts';
-import { deleteMessage } from '../lib/message.ts';
+import { deleteMessage, removeReaction } from '../lib/message.ts';
 
 // Help text shared by several commands below.
 const THREAD_TS_NOTE =
@@ -54,9 +54,9 @@ const MESSAGE_ID_FORMATS_NOTE =
 // --help content, kept apart from the command chains below (#324).
 const HELP = {
   group: {
-    summary: 'Send, edit, delete, react to and draft messages',
+    summary: 'Send, edit, delete, react, unreact and draft',
     description:
-      'Send, edit, delete and react to messages, and create, list, send or delete drafts. ' +
+      'Send, edit, delete and react to messages, remove your reactions, and create, list, send or delete drafts. ' +
       'To read messages use "slackcli conversations"; to find them, "slackcli search".',
   },
   send: {
@@ -105,12 +105,36 @@ const HELP = {
     examples: [
       'slackcli messages react --channel-id C0123456789 --timestamp 1712345678.123456 --emoji thumbsup',
       'slackcli messages react --permalink https://acme.slack.com/archives/C0123456789/p1712345678123456 --emoji eyes',
+      'slackcli messages react --channel-id C0123456789 --timestamp 1712345678.123456 --emoji eyes --json',
     ],
+    json: '{ channel_id, ts, emoji }.',
     notes: [
       MESSAGE_ID_FORMATS_NOTE,
       CHANNEL_NAME_NOTE,
       PERMALINK_MESSAGE_NOTE,
       '--emoji is the name without colons; custom workspace emoji work too.',
+      'Acts immediately, with no confirmation prompt.',
+    ],
+    dryRun: true,
+  },
+  unreact: {
+    summary: 'Remove your emoji reaction from a message',
+    description:
+      'Remove an emoji reaction you added to one message as the authenticated user or app (reactions.remove). ' +
+      MESSAGE_TARGET_TEXT,
+    examples: [
+      'slackcli messages unreact --channel-id C0123456789 --timestamp 1712345678.123456 --emoji eyes',
+      'slackcli messages unreact --permalink https://acme.slack.com/archives/C0123456789/p1712345678123456 --emoji eyes --json',
+    ],
+    json:
+      '{ channel_id, ts, emoji, removed, already_removed }. When Slack answers no_reaction, removed is false ' +
+      'and already_removed true, and it still exits 0, so an unreact is safe to retry.',
+    notes: [
+      MESSAGE_ID_FORMATS_NOTE,
+      CHANNEL_NAME_NOTE,
+      PERMALINK_MESSAGE_NOTE,
+      '--emoji is the name without colons; custom workspace emoji work too.',
+      "Removes only the reaction added by the authenticated user or app (reactions.remove acts on the caller's own reaction).",
       'Acts immediately, with no confirmation prompt.',
     ],
     dryRun: true,
@@ -579,6 +603,7 @@ export function createMessagesCommand(): Command {
     .option('--permalink <url>', 'Slack message link (replaces --channel-id and --timestamp)')
     .requiredOption('--emoji <name>', 'Emoji name (e.g., thumbsup, heart, fire)')
     .option('--workspace <id|name>', 'Workspace to use')
+    .option('--json', 'Output the result as JSON', false)
     .option(DRY_RUN_FLAG, DRY_RUN_DESCRIPTION, false)
     .action(async (options) => {
       const spinner = ora('Adding reaction...').start();
@@ -603,7 +628,7 @@ export function createMessagesCommand(): Command {
               { emoji: options.emoji },
               { lookupName: true },
             ),
-            false,
+            options.json,
           );
           return;
         }
@@ -611,9 +636,67 @@ export function createMessagesCommand(): Command {
         await client.addReaction(channelId, target.timestamp, options.emoji);
 
         spinner.succeed('Reaction added successfully!');
-        success(`Added :${options.emoji}: to message ${target.timestamp}`);
+        if (options.json) {
+          writeJson({ channel_id: channelId, ts: target.timestamp, emoji: options.emoji });
+        } else {
+          success(`Added :${options.emoji}: to message ${target.timestamp}`);
+        }
       } catch (err: any) {
         failCommand(err, { json: options.json, spinner, context: 'Failed to add reaction' });
+      }
+    });
+
+  // Remove a reaction from a message
+  describeCommand(messages.command('unreact'), HELP.unreact)
+    .option('--channel-id <id>', 'Channel ID, URL or name where the message is')
+    .option('--timestamp <ts>', 'Message timestamp (1234567890.123456 or p1234567890123456)')
+    .option('--permalink <url>', 'Slack message link (replaces --channel-id and --timestamp)')
+    .requiredOption('--emoji <name>', 'Emoji name (e.g., thumbsup, heart, fire)')
+    .option('--workspace <id|name>', 'Workspace to use')
+    .option('--json', 'Output the result as JSON', false)
+    .option(DRY_RUN_FLAG, DRY_RUN_DESCRIPTION, false)
+    .action(async (options) => {
+      const spinner = ora('Removing reaction...').start();
+
+      try {
+        const target = resolveMessageTarget(
+          { permalink: options.permalink, channelId: options.channelId, timestamp: options.timestamp },
+          { channel: '--channel-id', timestamp: '--timestamp' }
+        );
+
+        const client = await getAuthenticatedClient(options.workspace);
+        warnOnWorkspaceMismatch(client, target.workspace);
+        const channelId = await resolveTargetArg(client, options.channelId, target.channelId, '--channel-id', spinner);
+        spinner.stop();
+
+        if (options.dryRun) {
+          emitDryRun(
+            await buildPreview(
+              client,
+              'remove reaction',
+              { kind: 'message', id: channelId, ts: target.timestamp },
+              { emoji: options.emoji },
+              { lookupName: true },
+            ),
+            options.json,
+          );
+          return;
+        }
+
+        spinner.start('Removing reaction...');
+        const result = await removeReaction(client, channelId, target.timestamp, options.emoji);
+        if (result.already_removed) {
+          spinner.warn(`No :${result.emoji}: reaction from you on message ${result.ts}; nothing removed`);
+        } else {
+          spinner.succeed('Reaction removed successfully!');
+        }
+        if (options.json) {
+          writeJson(result);
+        } else if (result.removed) {
+          success(`Removed :${result.emoji}: from message ${result.ts}`);
+        }
+      } catch (err: any) {
+        failCommand(err, { json: options.json, spinner, context: 'Failed to remove reaction' });
       }
     });
 

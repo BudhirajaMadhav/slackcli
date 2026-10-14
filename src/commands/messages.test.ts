@@ -126,11 +126,10 @@ describe('messages command', () => {
     expect(longOptions('react')).not.toContain('--message-file');
   });
 
-  it('offers --json on the writing subcommands but not on react', () => {
-    for (const name of ['send', 'edit', 'draft']) {
+  it('offers --json on the writing subcommands', () => {
+    for (const name of ['send', 'edit', 'draft', 'react', 'unreact']) {
       expect(longOptions(name)).toContain('--json');
     }
-    expect(longOptions('react')).not.toContain('--json');
   });
 
   it('rejects --message-file with --message rather than silently picking one', async () => {
