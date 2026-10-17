@@ -369,6 +369,8 @@ slackcli saved list --state=to_do            # saved | to_do | completed
 slackcli canvas list --channel=C1234567890
 slackcli canvas read F1234567890             # Canvas -> Markdown
 slackcli canvas sections F1234567890 --type h2   # section IDs (app token)
+slackcli canvas create --title Notes --markdown-file ./notes.md   # app token
+slackcli canvas edit F1234567890 --operation insert_at_end --markdown-file ./more.md
 slackcli files info F1234567890
 slackcli files read F1234567890              # email plain_text or original text
 slackcli files download F1234567890 --output ./report.pdf
