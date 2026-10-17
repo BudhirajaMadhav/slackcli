@@ -41,6 +41,9 @@ const SLACK_CODE_MAP: Readonly<Record<string, ErrorCode>> = {
   no_such_subteam: 'not_found',
   team_not_found: 'not_found',
   invalid_scheduled_message_id: 'not_found',
+  // canvases.*: an unknown or inaccessible canvas, or one moved to the trash.
+  canvas_not_found: 'not_found',
+  canvas_deleted: 'not_found',
 
   missing_scope: 'permission_denied',
   not_in_channel: 'permission_denied',
@@ -54,6 +57,8 @@ const SLACK_CODE_MAP: Readonly<Record<string, ErrorCode>> = {
   enterprise_is_restricted: 'permission_denied',
   team_access_not_granted: 'permission_denied',
   ekm_access_denied: 'permission_denied',
+  // canvases.*: canvases are turned off for the team.
+  canvas_disabled_user_team: 'permission_denied',
   cant_update_message: 'permission_denied',
   cant_delete_message: 'permission_denied',
 
