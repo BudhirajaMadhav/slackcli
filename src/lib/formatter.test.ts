@@ -1307,4 +1307,16 @@ describe('scheduled message output (#379)', () => {
     }));
     expect(text).toContain('  Post at:   later');
   });
+
+  it('shows the time a date_due stands for, and leaves 0 (no due date) as it is', () => {
+    const preview = (dateDue: number) => plain(formatDryRun({
+      dry_run: true,
+      action: 'update saved item',
+      workspace: { name: 'Acme Corp', id: 'T0123456789', profile: 'acme' },
+      target: { kind: 'message', id: 'C0123456789', ts: '1712345678.000100' },
+      payload: { date_due: dateDue },
+    }));
+    expect(preview(POST_AT)).toContain(`${POST_AT} (Mon 12 Oct 2026, 07:50 UTC)`);
+    expect(preview(0)).toMatch(/Date due: +0$/m);
+  });
 });

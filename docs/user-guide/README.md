@@ -43,7 +43,7 @@ where the terminal is not known to show Unicode.
 | `team` | Read the workspace's own name, domain, and ID |
 | `usergroups` | List, read, and manage user groups ("subteams") |
 | `users` | Look up a user by ID and list users by account status |
-| `saved` | Read your "saved for later" list |
+| `saved` | Read your "saved for later" list; add, update, complete, reopen and remove items |
 | `canvas` | List canvases, read them as Markdown, look up section IDs, create and edit them |
 | `files` | Inspect, read, and download Slack-hosted files |
 | `emoji` | List a workspace's custom emoji and inspect one |

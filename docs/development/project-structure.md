@@ -45,7 +45,7 @@ They hold no Slack API knowledge.
 | `files.ts` | `info`, `read`, `download` |
 | `logs.ts` | `path`, `show`, `clear` |
 | `messages.ts` | `send`, `react`, `unreact`, `edit`, `delete`, `draft`, `list-drafts`, `send-draft`, `delete-draft`, `schedule`, `list-scheduled`, `delete-scheduled` |
-| `saved.ts` | `list` |
+| `saved.ts` | `list`, `add`, `update`, `complete`, `reopen`, `remove` |
 | `search.ts` | `messages`, `channels`, `people` |
 | `update.ts` | (default action), `check` |
 
@@ -66,7 +66,7 @@ They hold no Slack API knowledge.
 | `name-resolver.ts` | Channel names (`#general`) and user handles / emails → IDs. `parseNameReference()` is pure, so an ID or URL never reaches Slack; `resolveIdentifier()` is the per-argument entry point commands call after `slack-url-parser.ts` (it also drops the `@`/`#` from a prefixed ID), and `resolveUserList()` resolves a `<users...>` list with one shared `users.list` scan. Exact, case-insensitive matches only; nothing found throws `NotFoundError`, several matches `InvalidInputError`. `lazyClient()` lets write commands create a client only when a lookup needs one, so their no-auth confirmation refusal is unchanged. |
 | `message-input.ts` | Resolves the text of `messages send`/`edit`/`draft` from `--message`, `--message-file <path>` or `--message-file -` (stdin). The stdin read is bounded (1 MB, 5 minutes, a zero-length chunk ends it); stdin and the TTY check are injectable for tests. |
 | `mrkdwn.ts` | Slack mrkdwn → `rich_text` blocks (drafts). |
-| `schedule-time.ts` | `parseScheduleTime()`: the `--at` / `--in` of `messages schedule` → Slack's `post_at` (Unix seconds). Strict regexes instead of `Date.parse` or a date library; refuses impossible dates, skipped local times, the past and anything beyond `MAX_SCHEDULE_DAYS` (120). Pure, with an injected clock. |
+| `schedule-time.ts` | `parseScheduleTime()`: the `--at` / `--in` of `messages schedule` → Slack's `post_at` (Unix seconds). Strict regexes instead of `Date.parse` or a date library; refuses impossible dates, skipped local times, the past and anything beyond `MAX_SCHEDULE_DAYS` (120). Pure, with an injected clock. `parseDueTime()`: the same `--at` formats for `saved add|update --due`, without the future check or the cap; refuses a time at or before the epoch (`date_due: 0` means no due date). |
 | `drafts.ts` | Validates draft-list limits, extracts text from `rich_text`, and projects undocumented responses into the public command contract. |
 | `canvas-parser.ts` | Slack canvas HTML → Markdown. |
 | `canvas-sections.ts` | `canvas sections`'s lookup criteria (`buildSectionCriteria()`: `--type` / `--contains`, at least one, validated before any Slack call) and the section IDs read back from `canvases.sections.lookup` (`sectionsOf()`). |
@@ -85,7 +85,7 @@ They hold no Slack API knowledge.
 | `mark-read.ts` | `conversations mark-read`: reads the conversation's current read cursor (`last_read` of `conversations.info`, best effort), makes the `conversations.mark` write, and returns `{ channel_id, ts, previous_last_read }`. |
 | `message.ts` | Fetch one message by channel + timestamp, per auth type; delete one, treating `message_not_found` as already deleted; remove a reaction, treating `no_reaction` as already removed. |
 | `poll.ts` | `conversations read`'s polling helpers: exact Slack `ts` comparison, the `ts > --oldest` and `--exclude-self` filters, the `next_oldest` cursor, and resolving the authenticated identity (stored `user_id`, or one `auth.test`). |
-| `saved.ts` | Resolves saved-item pointers into messages, channels, and users. |
+| `saved.ts` | Resolves saved-item pointers into messages, channels, and users; the Later-list writes (`saved add`, `update`, `complete`, `reopen`, `remove`), turning their flags into one of the `saved.update` changes the Slack web client sends. |
 | `unread.ts` | Fetches and normalises unread channel data across both auth types, plus the workspace-wide thread summary (`threads` of `client.counts`, browser auth only) and each unread conversation's read cursors (`cursors`, kept off the list so the default output does not change). Also the pure helpers of the `conversations unread` action: `filterByTypes()` (`--types`) and `unreadSummaryLine()` (the spinner's closing line). |
 | `unread-messages.ts` | `conversations unread --messages` (browser auth only): flag validation, the cut at a conversation's `last_read` (reusing `poll.ts`), the conversation and per-conversation caps, normalising and paging Slack's undocumented thread view (a failure degrades to the summary), and `fetchUnreadDetails()`, which makes the calls one at a time. Logs IDs, counts and durations only, never message content. |
 | `formatter.ts` | Chalk-coloured renderers, status helpers, and `writeJson()`. |
@@ -101,7 +101,7 @@ They hold no Slack API knowledge.
 
 Every shared interface: `AuthType`, `TokenType`, `StandardAuthConfig`,
 `BrowserAuthConfig`, `WorkspaceConfig`, `WorkspacesData`, `SlackChannel`,
-`SlackUser`, `SlackFile`, `SlackMessage`, `SlackDraft`, `DraftSummary`, `SlackScheduledMessage`, `ScheduledMessageSummary`, `SlackAuthTestResponse`, `SavedItem`,
+`SlackUser`, `SlackFile`, `SlackMessage`, `SlackDraft`, `DraftSummary`, `SlackScheduledMessage`, `ScheduledMessageSummary`, `SlackAuthTestResponse`, `SavedItem`, `SavedItemUpdate`,
 `SearchMatch`, `ChannelSearchResult`, `PeopleSearchResult`, `UnreadChannel`, `UnreadCursor`, `UnreadThread`, `UnreadThreads`, `UnreadSummary`,
 `SlackCanvas`, and the per-command option interfaces.
 

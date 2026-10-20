@@ -856,6 +856,8 @@ function dryRunLabel(key: string): string {
 // A post_at is Unix seconds; a reader needs the time it stands for beside it.
 function formatDryRunField(key: string, value: unknown): string {
   if (key === 'post_at' && typeof value === 'number') return `${value} (${formatScheduleTime(value)})`;
+  // date_due 0 means "no due date", not 1970.
+  if (key === 'date_due' && typeof value === 'number' && value > 0) return `${value} (${formatScheduleTime(value)})`;
   return formatDryRunValue(value);
 }
 

@@ -21,8 +21,10 @@ A few features are browser-only, because Slack exposes no public API for them:
 draft creation and listing (`messages draft`, `messages list-drafts`), fast channel/people search
 (`search channels`, `search people` fall back to client-side filtering on
 standard auth), fetching an arbitrary thread reply by timestamp alone
-(`conversations get`), and reading the unread messages and unread thread replies
-in one call (`conversations unread --messages`).
+(`conversations get`), reading the unread messages and unread thread replies
+in one call (`conversations unread --messages`), adding and removing custom emoji
+(`emoji add`, `emoji remove`), and changing the Later list (`saved add`,
+`saved update`, `saved complete`, `saved reopen`, `saved remove`).
 
 Some features go the other way and need a standard token: scheduling a message
 for later (`messages schedule`, `messages list-scheduled`,

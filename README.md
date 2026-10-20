@@ -366,6 +366,8 @@ slackcli search people "ada@example.com"
 
 ```bash
 slackcli saved list --state=to_do            # saved | to_do | completed
+slackcli saved add --permalink="$LINK" --due "2026-10-12 09:50"   # browser auth
+slackcli saved complete --permalink="$LINK"
 slackcli canvas list --channel=C1234567890
 slackcli canvas read F1234567890             # Canvas -> Markdown
 slackcli canvas sections F1234567890 --type h2   # section IDs (app token)

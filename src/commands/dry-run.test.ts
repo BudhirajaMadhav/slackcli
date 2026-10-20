@@ -16,6 +16,7 @@ import { createCanvasCommand } from './canvas.ts';
 import { createConversationsCommand } from './conversations.ts';
 import { createEmojiCommand } from './emoji.ts';
 import { createMessagesCommand } from './messages.ts';
+import { createSavedCommand } from './saved.ts';
 import { createUsergroupsCommand } from './usergroups.ts';
 
 const BROWSER: WorkspaceConfig = {
@@ -47,6 +48,7 @@ const factories: Record<string, () => Command> = {
   conversations: createConversationsCommand,
   emoji: createEmojiCommand,
   messages: createMessagesCommand,
+  saved: createSavedCommand,
   usergroups: createUsergroupsCommand,
 };
 
@@ -145,7 +147,7 @@ describe('--dry-run', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  // The 20 writes that work on browser tokens: a preview, exit 0, no prompt, reads only.
+  // The 25 writes that work on browser tokens: a preview, exit 0, no prompt, reads only.
   it.each([
     [['messages', 'send', '--recipient-id', 'C0123456789', '--message', 'Deploy done'], 'send message'],
     [['messages', 'edit', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100', '--message', 'Fixed'], 'edit message'],
@@ -167,6 +169,11 @@ describe('--dry-run', () => {
     [['usergroups', 'disable', 'S0123456789'], 'disable user group'],
     [['emoji', 'add', 'r7', '--alias-for', 'rapid7'], 'add emoji alias'],
     [['emoji', 'remove', 'party-kiro'], 'remove emoji'],
+    [['saved', 'add', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100'], 'add saved item'],
+    [['saved', 'update', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100', '--no-due'], 'update saved item'],
+    [['saved', 'complete', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100'], 'complete saved item'],
+    [['saved', 'reopen', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100'], 'reopen saved item'],
+    [['saved', 'remove', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100'], 'remove saved item'],
   ])('%j previews without writing', async (argv, action) => {
     const preview = await runJson(argv);
     expect(preview).toMatchObject({
@@ -193,6 +200,16 @@ describe('--dry-run', () => {
     expect(methods.length > 0).toBe(reads);
     expect(methods.every((method) => READ_METHODS.has(method))).toBe(true);
     expect(stderr).not.toContain('[y/N]');
+  });
+
+  it('previews the due date a saved update would send', async () => {
+    const preview = await runJson(['saved', 'update', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100',
+      '--state', 'to_do', '--due', '1791791400']);
+    expect(preview).toMatchObject({
+      action: 'update saved item',
+      target: { kind: 'message', id: 'C0123456789', ts: '1712345678.000100' },
+      payload: { todo_state: 'to_do', date_due: 1791791400 },
+    });
   });
 
   it('previews messages react as text without adding the reaction', async () => {
@@ -299,6 +316,8 @@ describe('--dry-run', () => {
       { kind: 'message', id: 'C0123456789', name: '#deploys', ts: '1712345678.000100' }],
     [['conversations', 'members', 'add', '#deploys', '@alice'], { kind: 'channel', id: 'C0123456789', name: '#deploys' }],
     [['conversations', 'leave', 'deploys'], { kind: 'channel', id: 'C0123456789', name: '#deploys' }],
+    [['saved', 'complete', '--channel-id', 'deploys', '--timestamp', '1712345678.000100'],
+      { kind: 'message', id: 'C0123456789', name: '#deploys', ts: '1712345678.000100' }],
   ])('%j previews the resolved ID', async (argv, target) => {
     const preview = await runJson(argv);
     expect(preview.target).toEqual(target);
@@ -406,6 +425,11 @@ describe('--dry-run', () => {
     [['usergroups', 'update', 'S0123456789'], 'invalid_input'],
     [['usergroups', 'remove', 'S0123456789', 'U0000000001', 'U0000000002'], 'invalid_input'],
     [['usergroups', 'enable', '@nobody'], 'not_found'],
+    [['saved', 'add', '--channel-id', 'C0123456789'], 'invalid_input'],
+    [['saved', 'add', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100', '--due', 'tomorrow'], 'invalid_input'],
+    [['saved', 'update', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100'], 'invalid_input'],
+    [['saved', 'update', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100', '--state', 'completed'], 'invalid_input'],
+    [['saved', 'remove', '--timestamp', '1712345678.000100'], 'invalid_input'],
   ])('%j fails the dry run like the real command', async (argv, code) => {
     const error = await failJson(argv);
     expect(error.code).toBe(code);
@@ -418,6 +442,11 @@ describe('--dry-run', () => {
     [['messages', 'delete-draft', 'Dr0123456789']],
     [['emoji', 'add', 'r7', '--alias-for', 'rapid7']],
     [['emoji', 'remove', 'party-kiro']],
+    [['saved', 'add', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
+    [['saved', 'update', '--channel-id', 'deploys', '--timestamp', '1712345678.000100', '--no-due']],
+    [['saved', 'complete', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
+    [['saved', 'reopen', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
+    [['saved', 'remove', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
   ])('%j on an app token fails as browser-only', async (argv) => {
     const error = await failJson(argv, STANDARD);
     expect(error.code).toBe('unsupported_auth_type');

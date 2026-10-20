@@ -8,6 +8,7 @@ import * as authLib from '../lib/auth.ts';
 import { createCanvasCommand } from './canvas.ts';
 import { createConversationsCommand } from './conversations.ts';
 import { createMessagesCommand } from './messages.ts';
+import { createSavedCommand } from './saved.ts';
 import { createUsergroupsCommand } from './usergroups.ts';
 import { createUsersCommand } from './users.ts';
 
@@ -66,6 +67,7 @@ const factories: Record<string, () => Command> = {
   canvas: createCanvasCommand,
   conversations: createConversationsCommand,
   messages: createMessagesCommand,
+  saved: createSavedCommand,
   usergroups: createUsergroupsCommand,
   users: createUsersCommand,
 };
@@ -203,6 +205,22 @@ describe('name resolution in commands', () => {
       'messages', 'react', '--channel-id=#general', '--timestamp', '1712345678.000100', '--emoji', 'eyes',
     ]);
     expect(stub.calls.find((c) => c.method === 'addReaction')?.args[0]).toBe('C0000000001');
+  });
+
+  it('saved add resolves --channel-id and reports the ID', async () => {
+    const stub = await run([
+      'saved', 'add', '--channel-id', 'general', '--timestamp', '1712345678.000100', '--json',
+    ]);
+    expect(stub.calls.find((c) => c.method === 'addSavedItem')?.args[0]).toBe('C0000000001');
+    expect(json().channel_id).toBe('C0000000001');
+  });
+
+  it('saved remove resolves --channel-id and reports the ID', async () => {
+    const stub = await run([
+      'saved', 'remove', '--channel-id=#general', '--timestamp', '1712345678.000100', '--yes', '--json',
+    ]);
+    expect(stub.calls.find((c) => c.method === 'deleteSavedItem')?.args[0]).toBe('C0000000001');
+    expect(json().channel_id).toBe('C0000000001');
   });
 
   it('conversations read <name> reads the channel ID and reports it', async () => {

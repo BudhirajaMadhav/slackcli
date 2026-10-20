@@ -7,6 +7,7 @@ import { resetSync } from '@logtape/logtape';
 import {
   checkUploadFile,
   DRAFT_CREATE_AUTH_MESSAGE,
+  SAVED_WRITE_AUTH_MESSAGE,
   SCHEDULED_MESSAGES_AUTH_MESSAGE,
   SlackClient,
   SlackTransportError,
@@ -82,6 +83,14 @@ class TestSlackClient extends SlackClient {
     }
 
     if (method === 'drafts.delete') {
+      return { ok: true };
+    }
+
+    if (method === 'saved.add' || method === 'saved.update') {
+      return { ok: true, item: { item_id: params.item_id, item_type: 'message', ts: params.ts } };
+    }
+
+    if (method === 'saved.delete') {
       return { ok: true };
     }
 
@@ -2319,5 +2328,80 @@ describe('SlackClient emoji writes go through request() (maintainer feedback)', 
     } finally {
       fetchSpy.mockRestore();
     }
+  });
+});
+
+describe('SlackClient Later-list writes (#436)', () => {
+  const TS = '1712345678.000100';
+
+  it('adds a message as a to-do with saved.add', async () => {
+    const client = new TestSlackClient();
+
+    await client.addSavedItem('C123', TS, 1791791400);
+
+    expect(client.calls).toEqual([{
+      method: 'saved.add',
+      params: { item_type: 'message', item_id: 'C123', ts: TS, date_due: 1791791400, todo_state: 'to_do' },
+    }]);
+  });
+
+  it.each([
+    [{ date_due: 0 }],
+    [{ date_due: 1791791400 }],
+    [{ todo_state: 'saved', date_due: 0 }],
+    [{ todo_state: 'to_do', date_due: 1791791400 }],
+    [{ mark: 'completed', todo_state: 'completed', date_due: 0 }],
+    [{ mark: 'uncompleted', todo_state: 'to_do', date_due: 1791791400 }],
+  ] as const)('sends saved.update %p for the one item', async (update) => {
+    const client = new TestSlackClient();
+
+    await client.updateSavedItem('C123', TS, update);
+
+    expect(client.calls).toEqual([{
+      method: 'saved.update',
+      params: { item_type: 'message', item_id: 'C123', ts: TS, ...update },
+    }]);
+  });
+
+  it('removes one item with saved.delete', async () => {
+    const client = new TestSlackClient();
+
+    await client.deleteSavedItem('C123', TS);
+
+    expect(client.calls).toEqual([{
+      method: 'saved.delete',
+      params: { item_type: 'message', item_id: 'C123', ts: TS },
+    }]);
+  });
+
+  // Some saved.* methods act on the whole list when no item is named, so every
+  // write must name one.
+  it('refuses to send a write without item_id or ts', async () => {
+    const client = new TestSlackClient();
+
+    await expect(client.addSavedItem('', TS, 1791791400)).rejects.toThrow(InvalidInputError);
+    await expect(client.updateSavedItem('C123', '', { date_due: 0 })).rejects.toThrow(InvalidInputError);
+    await expect(client.deleteSavedItem('', '')).rejects.toThrow(InvalidInputError);
+    expect(client.calls).toEqual([]);
+  });
+
+  it('keeps the writes out of the retried read methods', () => {
+    expect(isReadMethod('saved.list')).toBe(true);
+    expect(isReadMethod('saved.add')).toBe(false);
+    expect(isReadMethod('saved.update')).toBe(false);
+    expect(isReadMethod('saved.delete')).toBe(false);
+  });
+
+  it('refuses all three on a standard app token before making a request', async () => {
+    const client = new SlackClient({
+      workspace_id: 'T123', workspace_name: 'Test Workspace',
+      auth_type: 'standard', token: 'xoxb-test', token_type: 'bot',
+    });
+    const request = spyOn(client, 'request');
+
+    await expect(client.addSavedItem('C123', TS, 1791791400)).rejects.toThrow(UnsupportedAuthTypeError);
+    await expect(client.updateSavedItem('C123', TS, { date_due: 0 })).rejects.toThrow(SAVED_WRITE_AUTH_MESSAGE);
+    await expect(client.deleteSavedItem('C123', TS)).rejects.toThrow(SAVED_WRITE_AUTH_MESSAGE);
+    expect(request).not.toHaveBeenCalled();
   });
 });

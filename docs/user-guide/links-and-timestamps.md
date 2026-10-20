@@ -39,7 +39,7 @@ slackcli users info alice@example.com --json
 | `C1234567890`, `@U9876543210`, a Slack URL | used as given — no lookup |
 
 Where it works: `messages send` and `messages draft` (`--recipient-id`),
-`messages edit`, `messages delete`, `messages react` and `messages unreact` (`--channel-id`), `conversations read`,
+`messages edit`, `messages delete`, `messages react`, `messages unreact` and the `saved` write verbs (`--channel-id`), `conversations read`,
 `get`, `mark-read`, `members list`, `members add`, `members remove`, `join` and `leave`
 (`<channel>`, and `<users...>` for add/remove), `canvas list` and `canvas read`
 (`--channel`), `users info`, and the `<users...>` of `usergroups add` and
@@ -97,8 +97,8 @@ slackcli messages react --permalink="https://myteam.slack.com/archives/C12345678
 ```
 
 Available on `messages send`, `messages react`, `messages unreact`, `messages edit`, `messages delete`,
-`messages draft`, `conversations read`, `conversations get`, and
-`conversations mark-read`.
+`messages draft`, the `saved` write verbs (`add`, `update`, `complete`, `reopen`, `remove`),
+`conversations read`, `conversations get`, and `conversations mark-read`.
 
 Rules worth knowing:
 

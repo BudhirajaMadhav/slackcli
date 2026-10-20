@@ -26,6 +26,8 @@ function refusingClient(code: string): unknown {
     get: (_target, prop) => {
       if (prop === 'then') return undefined;
       if (prop === 'workspaceHost') return 'acme.slack.com';
+      // The local auth-type guard is not a Slack call.
+      if (prop === 'requireBrowserAuth') return () => {};
       return async () => {
         throw Object.assign(new Error(`Slack API error: ${code}`), { slackData: { ok: false, error: code } });
       };
@@ -124,6 +126,11 @@ describe('--json failures, in process', () => {
     [['messages', 'send-draft', 'Dr0123456789', '--yes']],
     [['messages', 'delete-draft', 'Dr0123456789', '--yes']],
     [['saved', 'list']],
+    [['saved', 'add', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
+    [['saved', 'update', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100', '--no-due']],
+    [['saved', 'complete', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
+    [['saved', 'reopen', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
+    [['saved', 'remove', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100', '--yes']],
     [['search', 'messages', 'deploy']],
     [['search', 'channels', 'deploy']],
     [['search', 'people', 'alice']],
@@ -171,6 +178,7 @@ describe('--json failures, in process', () => {
     [['conversations', 'members', 'remove', 'C0123456789', 'U0123456789']],
     [['conversations', 'leave', 'C0123456789']],
     [['messages', 'delete', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
+    [['saved', 'remove', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100']],
     [['usergroups', 'create', 'Platform']],
     [['usergroups', 'update', 'S0123456789', '--name', 'Platform']],
     [['usergroups', 'add', 'S0123456789', 'U0123456789']],
@@ -216,6 +224,10 @@ describe('--json failures, in process', () => {
     [['messages', 'delete', '--channel-id', 'C0123456789', '--yes'], 'invalid_input', '--timestamp'],
     [['messages', 'unreact', '--channel-id', 'C0123456789', '--emoji', 'eyes'], 'invalid_input', '--timestamp'],
     [['messages', 'send-draft', 'Dr0123456789', '--yes'], 'not_found', 'Active draft Dr0123456789 was not found'],
+    [['saved', 'add', '--channel-id', 'C0123456789'], 'invalid_input', '--timestamp'],
+    [['saved', 'update', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100'], 'invalid_input', 'Nothing to update'],
+    [['saved', 'update', '--channel-id', 'C0123456789', '--timestamp', '1712345678.000100', '--state', 'saved', '--no-due'], 'invalid_input', '--state saved has no due date'],
+    [['saved', 'remove', '--channel-id', 'C0123456789', '--yes'], 'invalid_input', '--timestamp'],
     [['usergroups', 'read', '@nobody'], 'not_found', 'No user group matching "@nobody"'],
     [['usergroups', 'update', 'S0123456789', '--yes'], 'invalid_input', 'Nothing to update'],
     [['users', 'info', 'U0123456789'], 'not_found', ''],

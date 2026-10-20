@@ -155,6 +155,7 @@ endpoints. Each divergence is one method, and each is a deliberate trade:
 | `addEmoji`, `addEmojiAlias`, `removeEmoji` | `emoji.add` (multipart for an image), `emoji.remove` | throws — only the Enterprise Grid `admin.emoji.*` API exists |
 | `scheduleMessage`, `listScheduledMessages`, `deleteScheduledMessage` | throws — Slack answers `not_allowed_token_type` (`requireStandardAuth()`) | `chat.scheduleMessage`, `chat.scheduledMessages.list`, `chat.deleteScheduledMessage` |
 | `listSavedItems` | `saved.list` | `stars.list` |
+| `addSavedItem`, `updateSavedItem`, `deleteSavedItem` | `saved.add`, `saved.update`, `saved.delete` (one item: `item_type=message`, `item_id`, `ts`) | throws — `stars.*` is a different list |
 | `searchModules` | `search.modules` | list + client-side filter (capped at 1000) |
 | `getUnreadCounts` | `client.counts` (channels, DMs and the `threads` summary) | `conversations.list` unread fields — no thread equivalent |
 | `getUnreadThreadView` | `subscriptions.thread.getView` (undocumented; one page of the Threads view, paged with `current_ts`) | throws — no public API exists |

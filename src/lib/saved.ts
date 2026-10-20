@@ -1,5 +1,7 @@
 import type { SlackClient } from './slack-client.ts';
-import type { SavedItem, SlackUser } from '../types/index.ts';
+import type { SavedItem, SavedItemUpdate, SlackUser } from '../types/index.ts';
+import { InvalidInputError } from './cli-errors.ts';
+import { parseDueTime } from './schedule-time.ts';
 
 const PAGE_SIZE = 100;
 // Chunk channel groups so a single messages.list call cannot trip too_many_channels
@@ -214,4 +216,121 @@ export async function enrichSavedItems(
   const users = await fetchUsers(client, userIds, options.onProgress);
 
   return { items, users };
+}
+
+// --- Write actions: saved add / update / complete / reopen / remove ----------
+
+// The item after a write, as Slack reports it. `date_due` is Unix seconds, 0
+// when there is none; `todo_state` is saved, to_do or completed.
+export interface SavedWriteResult {
+  channel_id: string;
+  ts: string;
+  todo_state?: string;
+  date_due: number;
+}
+
+export interface RemovedSavedItemResult {
+  channel_id: string;
+  ts: string;
+  removed: true;
+}
+
+export const SAVED_STATES = ['saved', 'to_do'] as const;
+
+export const COMPLETE_UPDATE: SavedItemUpdate = { mark: 'completed', todo_state: 'completed', date_due: 0 };
+
+function nowSeconds(nowMs: number): number {
+  return Math.floor(nowMs / 1000);
+}
+
+// `saved add --due`: the Slack web client sends the present moment when no
+// due date is picked.
+export function addDueDate(due: string | undefined, nowMs: number = Date.now()): number {
+  return due === undefined ? nowSeconds(nowMs) : parseDueTime(due);
+}
+
+// A reopened item goes back to To-dos, due now, as in the Slack web client.
+export function reopenUpdate(nowMs: number = Date.now()): SavedItemUpdate {
+  return { mark: 'uncompleted', todo_state: 'to_do', date_due: nowSeconds(nowMs) };
+}
+
+/**
+ * Turn `saved update` options into one saved.update change. `due` is what
+ * Commander makes of `--due <time>` / `--no-due`: the time, false, or
+ * undefined. Only the combinations the Slack web client sends are allowed.
+ */
+export function savedUpdateFromOptions(
+  options: { state?: string; due?: string | false },
+  nowMs: number = Date.now(),
+): SavedItemUpdate {
+  const { state, due } = options;
+  if (state !== undefined && !(SAVED_STATES as readonly string[]).includes(state)) {
+    throw new InvalidInputError(`--state must be one of: ${SAVED_STATES.join(' | ')}`);
+  }
+  if (state === 'saved') {
+    if (due !== undefined) {
+      throw new InvalidInputError('--state saved has no due date; drop --due/--no-due.');
+    }
+    return { todo_state: 'saved', date_due: 0 };
+  }
+  if (state === 'to_do') {
+    if (due === false) {
+      throw new InvalidInputError('--state to_do takes a due date; pass --due <time> or leave it out for now.');
+    }
+    return { todo_state: 'to_do', date_due: addDueDate(due, nowMs) };
+  }
+  if (due === false) return { date_due: 0 };
+  if (due !== undefined) return { date_due: parseDueTime(due) };
+  throw new InvalidInputError('Nothing to update — pass at least one of --state, --due, or --no-due.');
+}
+
+// Slack answers saved.add/saved.update with the item; fall back to what was
+// sent if it does not.
+function writeResult(
+  response: any,
+  channelId: string,
+  timestamp: string,
+  sent: { todo_state?: string; date_due: number },
+): SavedWriteResult {
+  const item = response?.item ?? {};
+  return {
+    channel_id: channelId,
+    ts: timestamp,
+    todo_state: item.todo_state ?? sent.todo_state,
+    date_due: typeof item.date_due === 'number' ? item.date_due : sent.date_due,
+  };
+}
+
+// Add a message to the Later list as a to-do.
+export async function addSavedItem(
+  client: Pick<SlackClient, 'addSavedItem'>,
+  channelId: string,
+  timestamp: string,
+  dateDue: number,
+): Promise<SavedWriteResult> {
+  const response = await client.addSavedItem(channelId, timestamp, dateDue);
+  return writeResult(response, channelId, timestamp, { todo_state: 'to_do', date_due: dateDue });
+}
+
+// Apply one change to a Later-list item (update, complete, reopen).
+export async function updateSavedItem(
+  client: Pick<SlackClient, 'updateSavedItem'>,
+  channelId: string,
+  timestamp: string,
+  update: SavedItemUpdate,
+): Promise<SavedWriteResult> {
+  const response = await client.updateSavedItem(channelId, timestamp, update);
+  const todoState = 'todo_state' in update ? update.todo_state : undefined;
+  return writeResult(response, channelId, timestamp, { todo_state: todoState, date_due: update.date_due });
+}
+
+// Remove an item from the Later list. Not idempotent: Slack's answer for an
+// item that is not on the list is not known, so every failure is rethrown.
+export async function removeSavedItem(
+  client: Pick<SlackClient, 'deleteSavedItem'>,
+  channelId: string,
+  timestamp: string,
+): Promise<RemovedSavedItemResult> {
+  await client.deleteSavedItem(channelId, timestamp);
+  return { channel_id: channelId, ts: timestamp, removed: true };
 }

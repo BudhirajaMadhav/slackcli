@@ -6,7 +6,7 @@ Condensed from https://github.com/shaharia-lab/slackcli/tree/main/docs/user-guid
 ## Everywhere
 
 - `--json`: every read command, plus `messages send|edit|delete|draft|schedule|delete-scheduled`,
-  `canvas create|edit` and `usergroups` writes. JSON on stdout; spinners, warnings, errors on stderr. A failure with
+  `canvas create|edit`, `saved add|update|complete|reopen|remove` and `usergroups` writes. JSON on stdout; spinners, warnings, errors on stderr. A failure with
   `--json` exits 1 and ends stderr with one line
   `{"error":{"code","message","hint"?,"retryable","slack_error"?}}`: branch on
   `code`, never on message text.
@@ -22,10 +22,11 @@ Condensed from https://github.com/shaharia-lab/slackcli/tree/main/docs/user-guid
 - IDs accept Slack URLs (channel, DM, user, canvas, file). Timestamps accept
   `p1234567890123456`, `1234567890123456`, `1234567890.123456`.
 - `--permalink <url>` replaces channel + timestamp on `messages send|react|unreact|edit|delete|draft`,
-  `conversations read|get|mark-read`. A reply link targets the parent thread
+  `saved add|update|complete|reopen|remove`, `conversations read|get|mark-read`. A reply link targets the parent thread
   (`get` and `mark-read` use the linked message's own timestamp).
 - `--dry-run` on every Slack write (`messages send|edit|delete|react|unreact|draft|send-draft|delete-draft|schedule|delete-scheduled`,
-  `conversations members add|remove`, `join`, `leave`, `mark-read`, `canvas create|edit`, every `usergroups` write):
+  `conversations members add|remove`, `join`, `leave`, `mark-read`, `canvas create|edit`,
+  `saved add|update|complete|reopen|remove`, every `usergroups` write):
   resolves and validates, writes nothing, never prompts or needs `--yes`, exits 0.
   With `--json`: `{dry_run: true, action, workspace: {name,id,profile}, target: {kind,id?,name?,ts?,thread_ts?}, payload}`.
 - Exit `0` success (empty result is success), `1` failure.
@@ -142,6 +143,10 @@ disable it instead. Enterprise Grid writes need `--team=T…`.
 
 ```
 saved list [--limit=N] [--state=saved|to_do|completed] [--json]
+saved add (--channel-id=C --timestamp=TS | --permalink=URL) [--due=TIME] [--json]   # browser auth only; a to-do, due now by default
+saved update (--channel-id=C --timestamp=TS | --permalink=URL) [--state=saved|to_do] [--due=TIME | --no-due] [--json]
+saved complete|reopen (--channel-id=C --timestamp=TS | --permalink=URL) [--json]   # reopen: back to to_do, due now
+saved remove (--channel-id=C --timestamp=TS | --permalink=URL) [--yes] [--json]    # off the Later list; message untouched
 canvas list [--limit=20] [--channel=C] [--json]
 canvas read <F…|url> | --channel=C [--raw] [--json]     # Markdown; --json has `markdown`
 canvas sections <F…|url> (--type=h1,h2,any_header,list,… | --contains=T) [--json]   # app token only; section IDs

@@ -1,6 +1,9 @@
 # Work through Slack saved items
 
-`slackcli saved list` reads your **Later** / "saved for later" list.
+`slackcli saved list` reads your **Later** / "saved for later" list;
+`add`, `update`, `complete`, `reopen` and `remove` change it.
+
+## `saved list`
 
 ```bash
 slackcli saved list
@@ -35,3 +38,113 @@ The two auth types read different Slack lists and return different shapes:
 
 `--json` emits `{item_count, items}`. When there are no items, nothing is
 written to stdout and the command exits 0.
+
+## `saved add`
+
+Adds a message to your Later list as a **to-do**. **Browser authentication
+only**: the Later list is changed through the `saved.add`, `saved.update` and
+`saved.delete` endpoints of Slack's web client, which authenticate with a
+browser session, so a standard app token is refused with `unsupported_auth_type`
+(its `stars.*` list is a different list). Each write names one item; SlackCLI
+never calls Slack's bulk Later methods, some of which act on the whole list.
+
+```bash
+slackcli saved add --channel-id=C1234567890 --timestamp=1234567890.123456
+slackcli saved add --permalink="https://myteam.slack.com/archives/C1234567890/p1234567890123456" --due "2026-10-12 09:50" --json
+```
+
+Name the message as for `messages delete`: `--channel-id` (an ID, a Slack URL
+or a channel name) and `--timestamp`, or a single `--permalink` to the message.
+See [links and timestamps](links-and-timestamps.md).
+
+Without `--due` the to-do is due now, as in Slack's web client when no date is
+picked. `--due` takes the same formats as `messages schedule --at`: Unix seconds
+(`1791791400`), ISO 8601 with an offset (`2026-10-12T09:50:00+02:00` or `...Z`),
+or a local date and time (`"2026-10-12 09:50"`). Unlike `--at` it may be in the
+past (an overdue to-do) and has no 120-day limit, but must be after the Unix
+epoch: Slack reads `0` as a to-do with no due date.
+
+| Option | Purpose |
+|---|---|
+| `--channel-id <id>` | Channel ID, URL or name where the message is |
+| `--timestamp <ts>` | Message timestamp (`1234567890.123456` or `p1234567890123456`) |
+| `--permalink <url>` | Slack message link (replaces `--channel-id` and `--timestamp`) |
+| `--due <time>` | Due date and time |
+| `--workspace <id\|name>` | Workspace to use |
+| `--json` | JSON output: `{channel_id, ts, todo_state, date_due}` |
+| `--dry-run` | Show what would be done without doing it |
+
+With `--json`, `add`, `update`, `complete` and `reopen` print the item as Slack
+reports it after the change (`date_due` in Unix seconds, `0` for none). A Slack
+refusal exits 1 with the Slack code in `slack_error`.
+
+## `saved update`
+
+Moves an item between **Saved** and **To-dos**, or changes its due date.
+**Browser authentication only.** Name the message as for `saved add`.
+
+```bash
+slackcli saved update --channel-id=C1234567890 --timestamp=1234567890.123456 --due 2026-10-12T09:50:00+02:00
+slackcli saved update --channel-id=C1234567890 --timestamp=1234567890.123456 --no-due
+slackcli saved update --permalink="https://myteam.slack.com/archives/C1234567890/p1234567890123456" --state saved
+```
+
+`--due` changes the due date and `--no-due` clears it; the item stays where it
+is. `--state saved` moves the item to Saved and clears its due date, so it takes
+no `--due` or `--no-due`. `--state to_do` moves it to To-dos, due at `--due` or
+now, so it takes no `--no-due`. At least one of `--state`, `--due` or `--no-due`
+is required.
+
+| Option | Purpose |
+|---|---|
+| `--channel-id <id>` | Channel ID, URL or name where the message is |
+| `--timestamp <ts>` | Message timestamp (`1234567890.123456` or `p1234567890123456`) |
+| `--permalink <url>` | Slack message link (replaces `--channel-id` and `--timestamp`) |
+| `--state <state>` | `saved` or `to_do` |
+| `--due <time>` | Due date and time, in the `saved add` formats |
+| `--no-due` | Clear the due date |
+| `--workspace <id\|name>` | Workspace to use |
+| `--json` | JSON output: `{channel_id, ts, todo_state, date_due}` |
+| `--dry-run` | Show what would be done without doing it |
+
+## `saved complete` and `saved reopen`
+
+`complete` marks an item completed and clears its due date. `reopen` marks a
+completed item not completed, which puts it back in To-dos, due now.
+**Browser authentication only.** Both act immediately, with no confirmation
+prompt.
+
+```bash
+slackcli saved complete --permalink="https://myteam.slack.com/archives/C1234567890/p1234567890123456"
+slackcli saved reopen --channel-id=C1234567890 --timestamp=1234567890.123456 --json
+```
+
+| Option | Purpose |
+|---|---|
+| `--channel-id <id>` | Channel ID, URL or name where the message is |
+| `--timestamp <ts>` | Message timestamp (`1234567890.123456` or `p1234567890123456`) |
+| `--permalink <url>` | Slack message link (replaces `--channel-id` and `--timestamp`) |
+| `--workspace <id\|name>` | Workspace to use |
+| `--json` | JSON output: `{channel_id, ts, todo_state, date_due}` |
+| `--dry-run` | Show what would be done without doing it |
+
+## `saved remove`
+
+Removes an item from your Later list; the message itself is not touched.
+**Browser authentication only.** It asks for confirmation; pass `--yes` to skip
+the prompt (required when stdin is not a terminal).
+
+```bash
+slackcli saved remove --channel-id=C1234567890 --timestamp=1234567890.123456
+slackcli saved remove --permalink="https://myteam.slack.com/archives/C1234567890/p1234567890123456" --yes --json
+```
+
+| Option | Purpose |
+|---|---|
+| `--channel-id <id>` | Channel ID, URL or name where the message is |
+| `--timestamp <ts>` | Message timestamp (`1234567890.123456` or `p1234567890123456`) |
+| `--permalink <url>` | Slack message link (replaces `--channel-id` and `--timestamp`) |
+| `--yes` | Remove without the confirmation prompt |
+| `--workspace <id\|name>` | Workspace to use |
+| `--json` | JSON output: `{channel_id, ts, removed: true}` |
+| `--dry-run` | Show what would be done without doing it |

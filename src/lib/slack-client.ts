@@ -7,6 +7,7 @@ import type {
   DryRunWorkspace,
   SlackAuthTestResponse,
   ScheduledMessageSummary,
+  SavedItemUpdate,
   SlackDraftListResponse,
   SlackScheduledMessage,
   SlackScheduledMessageListResponse,
@@ -302,6 +303,13 @@ export const EMOJI_WRITE_AUTH_MESSAGE =
   'Managing custom emoji (emoji add/remove) requires browser authentication; ' +
   'sign in with a browser session (slackcli auth login-auto or auth login-browser)';
 
+// Later-list writes use Slack's web-client saved.add/saved.update/saved.delete
+// endpoints, which authenticate with a browser session; an app token has no
+// equivalent (stars.* is a different list).
+export const SAVED_WRITE_AUTH_MESSAGE =
+  'Changing the Later list (saved add/update/complete/reopen/remove) requires browser authentication; ' +
+  'sign in with a browser session (slackcli auth login-auto or auth login-browser)';
+
 // The refusal of the scheduled-message calls on browser session tokens: Slack
 // answers them with `not_allowed_token_type` (#379).
 export const SCHEDULED_MESSAGES_AUTH_MESSAGE =
@@ -313,6 +321,15 @@ export const SCHEDULED_MESSAGES_AUTH_MESSAGE =
 export const CANVAS_AUTH_MESSAGE =
   'This canvas command requires a standard Slack app token (xoxb or xoxp); ' +
   'browser session tokens cannot use Slack\'s canvases API';
+
+// The item a saved.* write acts on. Both parts are required: some saved.*
+// methods act on the whole list when the item is left out.
+function savedItemParams(channel: string, ts: string): Record<string, string> {
+  if (!channel || !ts) {
+    throw new InvalidInputError('A Later-list write needs both the channel ID and the message timestamp.');
+  }
+  return { item_type: 'message', item_id: channel, ts };
+}
 
 // chat.scheduledMessages.list page size, and a bound on the pages followed so a
 // cursor that never ends cannot loop forever.
@@ -880,6 +897,29 @@ export class SlackClient {
       return this.request('saved.list', params);
     }
     return this.request('stars.list', params);
+  }
+
+  // Add a message to the Later list as a to-do, due at `dateDue` (Unix
+  // seconds). Browser auth only — see SAVED_WRITE_AUTH_MESSAGE.
+  async addSavedItem(channel: string, ts: string, dateDue: number): Promise<any> {
+    this.requireBrowserAuth(SAVED_WRITE_AUTH_MESSAGE);
+    return this.request('saved.add', {
+      ...savedItemParams(channel, ts),
+      date_due: dateDue,
+      todo_state: 'to_do',
+    });
+  }
+
+  // Change one Later-list item. Browser auth only.
+  async updateSavedItem(channel: string, ts: string, update: SavedItemUpdate): Promise<any> {
+    this.requireBrowserAuth(SAVED_WRITE_AUTH_MESSAGE);
+    return this.request('saved.update', { ...savedItemParams(channel, ts), ...update });
+  }
+
+  // Remove one item from the Later list. Browser auth only.
+  async deleteSavedItem(channel: string, ts: string): Promise<any> {
+    this.requireBrowserAuth(SAVED_WRITE_AUTH_MESSAGE);
+    return this.request('saved.delete', savedItemParams(channel, ts));
   }
 
   // Batch-fetch messages by channel + timestamp (browser auth only).

@@ -338,6 +338,15 @@ export interface SavedItem {
   };
 }
 
+// The saved.update changes slackcli sends: only the combinations the Slack web
+// client was seen sending. `date_due` is Unix seconds; 0 clears it.
+export type SavedItemUpdate =
+  | { date_due: number }
+  | { todo_state: 'saved'; date_due: 0 }
+  | { todo_state: 'to_do'; date_due: number }
+  | { mark: 'completed'; todo_state: 'completed'; date_due: 0 }
+  | { mark: 'uncompleted'; todo_state: 'to_do'; date_due: number };
+
 // Search results
 export interface SearchMatch {
   ts: string;

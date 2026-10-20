@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { InvalidInputError } from './cli-errors.ts';
-import { MAX_SCHEDULE_DAYS, parseScheduleTime } from './schedule-time.ts';
+import { MAX_SCHEDULE_DAYS, parseDueTime, parseScheduleTime } from './schedule-time.ts';
 
 // Saturday 10 October 2026, 12:00:00 UTC.
 const NOW_MS = Date.UTC(2026, 9, 10, 12, 0, 0);
@@ -315,5 +315,33 @@ describe('parseScheduleTime flags', () => {
     const after = Math.floor(Date.now() / 1000);
     expect(postAt).toBeGreaterThanOrEqual(before + 3600);
     expect(postAt).toBeLessThanOrEqual(after + 3600);
+  });
+});
+
+describe('parseDueTime', () => {
+  it('reads the --at formats', () => {
+    expect(parseDueTime(String(NOW + 600))).toBe(NOW + 600);
+    expect(parseDueTime('2026-10-12T09:50:00+02:00')).toBe(Date.UTC(2026, 9, 12, 7, 50, 0) / 1000);
+  });
+
+  it('has no future check and no 120-day cap', () => {
+    expect(parseDueTime('2020-01-01T00:00:00Z')).toBe(Date.UTC(2020, 0, 1) / 1000);
+    expect(parseDueTime('2099-10-10T12:00:00Z')).toBe(Date.UTC(2099, 9, 10, 12, 0, 0) / 1000);
+  });
+
+  it('names --due when it cannot read the time', () => {
+    expect(refusal(() => parseDueTime('tomorrow'))).toBe(
+      'Cannot read --due "tomorrow" as a time. Use Unix seconds (1791791400), ' +
+        'ISO 8601 with an offset (2026-10-12T09:50:00+02:00 or ...Z), ' +
+        'or a local date and time ("2026-10-12 09:50").',
+    );
+    expect(refusal(() => parseDueTime('2026-02-30 09:50'))).toStartWith('--due "2026-02-30 09:50" is not');
+  });
+
+  it('refuses a due date at or before the epoch, which Slack reads as no due date', () => {
+    expect(refusal(() => parseDueTime('0'))).toBe('--due must be after 1970-01-01T00:00:00Z; got "0".');
+    expect(refusal(() => parseDueTime('1970-01-01T00:00:00Z'))).toContain('--due must be after');
+    expect(refusal(() => parseDueTime('1969-12-31T23:00:00Z'))).toContain('--due must be after');
+    expect(parseDueTime('1')).toBe(1);
   });
 });

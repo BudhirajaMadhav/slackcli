@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'bun:test';
-import { enrichSavedItems } from './saved.ts';
+import {
+  COMPLETE_UPDATE,
+  addDueDate,
+  addSavedItem,
+  enrichSavedItems,
+  removeSavedItem,
+  reopenUpdate,
+  savedUpdateFromOptions,
+  updateSavedItem,
+} from './saved.ts';
+import { InvalidInputError } from './cli-errors.ts';
 import type { SlackClient } from './slack-client.ts';
 
 // Minimal mock client that returns canned responses
@@ -396,5 +406,132 @@ describe('enrichSavedItems', () => {
       'Fetching saved items (2 so far)...',
       'Fetching saved items (4 so far)...',
     ]);
+  });
+});
+
+// Saturday 10 October 2026, 12:00:00 UTC.
+const NOW_MS = Date.UTC(2026, 9, 10, 12, 0, 0);
+const NOW = NOW_MS / 1000;
+const TS = '1712345678.000100';
+
+function refusal(run: () => unknown): string {
+  try {
+    run();
+  } catch (err) {
+    expect(err).toBeInstanceOf(InvalidInputError);
+    return (err as Error).message;
+  }
+  throw new Error('expected an InvalidInputError');
+}
+
+describe('addDueDate', () => {
+  it('is now when no --due is given', () => {
+    expect(addDueDate(undefined, NOW_MS + 999)).toBe(NOW);
+  });
+
+  it('reads --due in the --at formats', () => {
+    expect(addDueDate(String(NOW + 60), NOW_MS)).toBe(NOW + 60);
+    expect(addDueDate('2026-10-12T09:50:00Z', NOW_MS)).toBe(Date.UTC(2026, 9, 12, 9, 50, 0) / 1000);
+  });
+
+  it('refuses a --due it cannot read', () => {
+    expect(refusal(() => addDueDate('tomorrow', NOW_MS))).toContain('Cannot read --due "tomorrow"');
+  });
+});
+
+describe('savedUpdateFromOptions', () => {
+  it('moves an item to Saved with no due date', () => {
+    expect(savedUpdateFromOptions({ state: 'saved' }, NOW_MS)).toEqual({ todo_state: 'saved', date_due: 0 });
+  });
+
+  it('moves an item to To-dos, due now or at --due', () => {
+    expect(savedUpdateFromOptions({ state: 'to_do' }, NOW_MS)).toEqual({ todo_state: 'to_do', date_due: NOW });
+    expect(savedUpdateFromOptions({ state: 'to_do', due: String(NOW + 60) }, NOW_MS))
+      .toEqual({ todo_state: 'to_do', date_due: NOW + 60 });
+  });
+
+  it('changes or clears only the due date', () => {
+    expect(savedUpdateFromOptions({ due: String(NOW + 60) }, NOW_MS)).toEqual({ date_due: NOW + 60 });
+    expect(savedUpdateFromOptions({ due: false }, NOW_MS)).toEqual({ date_due: 0 });
+  });
+
+  it('refuses an unknown --state', () => {
+    expect(refusal(() => savedUpdateFromOptions({ state: 'completed' }, NOW_MS)))
+      .toBe('--state must be one of: saved | to_do');
+  });
+
+  it('refuses a due date on --state saved', () => {
+    expect(refusal(() => savedUpdateFromOptions({ state: 'saved', due: String(NOW + 60) }, NOW_MS)))
+      .toContain('--state saved has no due date');
+    expect(refusal(() => savedUpdateFromOptions({ state: 'saved', due: false }, NOW_MS)))
+      .toContain('--state saved has no due date');
+  });
+
+  it('refuses --state to_do with --no-due', () => {
+    expect(refusal(() => savedUpdateFromOptions({ state: 'to_do', due: false }, NOW_MS)))
+      .toContain('--state to_do takes a due date');
+  });
+
+  it('refuses a --due it cannot read', () => {
+    expect(refusal(() => savedUpdateFromOptions({ due: 'tomorrow' }, NOW_MS))).toContain('Cannot read --due "tomorrow"');
+  });
+
+  it('refuses an update with nothing to change', () => {
+    expect(refusal(() => savedUpdateFromOptions({}, NOW_MS))).toContain('Nothing to update');
+  });
+});
+
+describe('Later-list write actions', () => {
+  const item = { item_id: 'C123', item_type: 'message', ts: TS, todo_state: 'to_do', date_due: NOW + 60 };
+
+  it('adds an item and reports its state from Slack', async () => {
+    const calls: unknown[] = [];
+    const client = {
+      addSavedItem: async (...args: unknown[]) => { calls.push(args); return { ok: true, item }; },
+    };
+
+    expect(await addSavedItem(client, 'C123', TS, NOW + 60))
+      .toEqual({ channel_id: 'C123', ts: TS, todo_state: 'to_do', date_due: NOW + 60 });
+    expect(calls).toEqual([['C123', TS, NOW + 60]]);
+  });
+
+  it('falls back to what it sent when Slack returns no item', async () => {
+    const client = { addSavedItem: async () => ({ ok: true }) };
+
+    expect(await addSavedItem(client, 'C123', TS, NOW))
+      .toEqual({ channel_id: 'C123', ts: TS, todo_state: 'to_do', date_due: NOW });
+  });
+
+  it('completes and reopens an item with the web-client combinations', async () => {
+    const calls: unknown[] = [];
+    const client = {
+      updateSavedItem: async (...args: unknown[]) => { calls.push(args); return { ok: true }; },
+    };
+
+    expect(await updateSavedItem(client, 'C123', TS, COMPLETE_UPDATE))
+      .toEqual({ channel_id: 'C123', ts: TS, todo_state: 'completed', date_due: 0 });
+    expect(await updateSavedItem(client, 'C123', TS, reopenUpdate(NOW_MS)))
+      .toEqual({ channel_id: 'C123', ts: TS, todo_state: 'to_do', date_due: NOW });
+    expect(calls).toEqual([
+      ['C123', TS, { mark: 'completed', todo_state: 'completed', date_due: 0 }],
+      ['C123', TS, { mark: 'uncompleted', todo_state: 'to_do', date_due: NOW }],
+    ]);
+  });
+
+  it('takes the state from Slack on a due-date-only update', async () => {
+    const client = { updateSavedItem: async () => ({ ok: true, item: { ...item, date_due: 0 } }) };
+
+    expect(await updateSavedItem(client, 'C123', TS, { date_due: 0 }))
+      .toEqual({ channel_id: 'C123', ts: TS, todo_state: 'to_do', date_due: 0 });
+  });
+
+  it('removes an item, and rethrows a failure', async () => {
+    const client = { deleteSavedItem: async () => ({ ok: true }) };
+    expect(await removeSavedItem(client, 'C123', TS)).toEqual({ channel_id: 'C123', ts: TS, removed: true });
+
+    const failing = {
+      deleteSavedItem: async () => { throw Object.assign(new Error('x'), { slackData: { error: 'message_not_found' } }); },
+    };
+    await expect(removeSavedItem(failing, 'C123', TS)).rejects.toThrow('x');
   });
 });

@@ -15,7 +15,8 @@ Every read command supports `--json`: `conversations list`, `conversations read`
 
 The writing commands support it too — `messages send`, `messages edit`, `messages delete`,
 `messages react`, `messages unreact`, `messages draft`, `messages send-draft`, `messages delete-draft`, `messages schedule`,
-`messages delete-scheduled`, `emoji add`, `emoji remove`, `canvas create`, `canvas edit`, the `usergroups` write verbs (`create`, `update`, `add`,
+`messages delete-scheduled`, `emoji add`, `emoji remove`, `canvas create`, `canvas edit`, the `saved` write verbs
+(`add`, `update`, `complete`, `reopen`, `remove`), the `usergroups` write verbs (`create`, `update`, `add`,
 `remove`, `enable`, `disable`), the `conversations` membership write/self
 verbs (`members add`, `members remove`, `join`, `leave`), and
 `conversations mark-read` — where it returns the
@@ -138,6 +139,7 @@ Every command that changes something in Slack takes `--dry-run`:
 `schedule`, `delete-scheduled`;
 `conversations members add`, `members remove`, `join`, `leave`, `mark-read`;
 `emoji add`, `remove`;
+`saved add`, `update`, `complete`, `reopen`, `remove`;
 `canvas create`, `edit`; and
 `usergroups create`, `update`, `add`, `remove`, `enable`, `disable`.
 
@@ -172,6 +174,7 @@ With `--json` the preview is one object on stdout:
   `delete scheduled message`, `add channel members`,
   `remove channel members`, `join channel`, `leave channel`,
   `mark conversation read`, `add emoji`, `add emoji alias`, `remove emoji`,
+  `add saved item`, `update saved item`, `complete saved item`, `reopen saved item`, `remove saved item`,
   `create user group`, `update user group`, `add user group members`,
   `remove user group members`, `enable user group`, `disable user group`.
 - `target.kind` is `channel`, `user` (a DM, which a dry run does not open),
@@ -184,7 +187,8 @@ With `--json` the preview is one object on stdout:
   `file`, `file_size`, the `files` list, `total_size` and `comment` for an
   upload (`file`/`file_size` describe the first file, `files`/`total_size` cover
   the whole set — one or many); the `emoji`; `file` and `bytes`, or
-  `alias_for`, for an added custom emoji; the `add` or
+  `alias_for`, for an added custom emoji; the `todo_state`, `date_due` (Unix
+  seconds, `0` for none) and, to complete or reopen, `mark` of a saved item; the `add` or
   `remove` user IDs for a channel; for a user group, the fields to set, or
   `{ added, removed, next, noop }` where `next` is the full member list the
   write would send. `team` appears when `--team` is passed.
@@ -192,7 +196,7 @@ With `--json` the preview is one object on stdout:
 A dry run may make read calls (resolving a user group, reading its members,
 loading a draft, finding a scheduled message, naming the target) but no write call. A failure is the real
 command's failure: invalid input, a missing file, bad Block Kit JSON, an
-unknown group, a draft command on an app token or a scheduled-message command
+unknown group, a draft or `saved` write command on an app token or a scheduled-message command
 on a browser session exits `1` with the same error. **Slack checks permissions only on the real write**, so a dry run can
 pass where the write is then refused (`missing_scope`, `not_in_channel`, …).
 

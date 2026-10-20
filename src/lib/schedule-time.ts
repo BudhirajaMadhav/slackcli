@@ -2,6 +2,7 @@ import { InvalidInputError } from './cli-errors.ts';
 
 // When a scheduled message should be posted (#379): `--at <time>` or
 // `--in <duration>`, turned into the Unix seconds Slack's `post_at` takes.
+// `saved add|update --due` reads the `--at` formats through parseDueTime().
 //
 // Hand-rolled rather than a date library: the grammar is three regexes, and a
 // library would take a slot in the seven-dependency budget for it. The regexes
@@ -87,26 +88,41 @@ export function parseScheduleTime(input: ScheduleTimeInput, nowMs: number = Date
   return postAt;
 }
 
-function parseAt(raw: string): number {
+/**
+ * The due date of a Later-list item (`saved add|update --due`), in Unix
+ * seconds. Takes the `--at` formats; the future check and the 120-day cap are
+ * chat.scheduleMessage rules, so neither applies. A due date at or before the
+ * epoch is refused: `date_due: 0` is a to-do with no due date.
+ */
+export function parseDueTime(raw: string): number {
+  const due = parseAt(raw, '--due');
+  if (due <= 0) {
+    throw new InvalidInputError(`--due must be after 1970-01-01T00:00:00Z; got "${raw}".`);
+  }
+  return due;
+}
+
+// `flag` names the option in the error messages.
+function parseAt(raw: string, flag = '--at'): number {
   const value = raw.trim();
   if (UNIX_SECONDS.test(value)) return Number(value);
 
   const match = DATE_TIME.exec(value);
   if (!match) {
-    throw new InvalidInputError(`Cannot read --at "${raw}" as a time. ${AT_FORMATS}`);
+    throw new InvalidInputError(`Cannot read ${flag} "${raw}" as a time. ${AT_FORMATS}`);
   }
   const [year, month, day, hour, minute] = match.slice(1, 6).map(Number);
   const fields: WallClock = { year, month, day, hour, minute, second: Number(match[6] ?? 0) };
   const zone = match[7];
 
-  const ms = zone === undefined ? localTime(raw, fields) : zonedTime(raw, zone, fields);
+  const ms = zone === undefined ? localTime(raw, flag, fields) : zonedTime(raw, flag, zone, fields);
   return Math.floor(ms / 1000);
 }
 
 // A time with an explicit `Z` or offset. The fields are checked by building
 // the same wall-clock time in UTC and reading it back: JavaScript rolls an
 // impossible date over (30 February becomes 2 March) rather than refusing it.
-function zonedTime(raw: string, zone: string, fields: WallClock): number {
+function zonedTime(raw: string, flag: string, zone: string, fields: WallClock): number {
   const { year, month, day, hour, minute, second } = fields;
   const wallClock = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
   const real = wallClock.getUTCFullYear() === year
@@ -115,11 +131,11 @@ function zonedTime(raw: string, zone: string, fields: WallClock): number {
     && wallClock.getUTCHours() === hour
     && wallClock.getUTCMinutes() === minute
     && wallClock.getUTCSeconds() === second;
-  if (!real) throw notARealTime(raw);
-  return wallClock.getTime() - offsetMs(raw, zone);
+  if (!real) throw notARealTime(raw, flag);
+  return wallClock.getTime() - offsetMs(raw, flag, zone);
 }
 
-function offsetMs(raw: string, zone: string): number {
+function offsetMs(raw: string, flag: string, zone: string): number {
   if (zone === 'Z') return 0;
   const digits = zone.slice(1).replace(':', '');
   const hours = Number(digits.slice(0, 2));
@@ -129,7 +145,7 @@ function offsetMs(raw: string, zone: string): number {
   // The widest real offsets are -12:00 and +14:00.
   const widest = sign < 0 ? 12 * 60 : 14 * 60;
   if (minutes > 59 || total > widest) {
-    throw new InvalidInputError(`--at "${raw}" has a UTC offset that does not exist (${zone}).`);
+    throw new InvalidInputError(`${flag} "${raw}" has a UTC offset that does not exist (${zone}).`);
   }
   return sign * total * 60_000;
 }
@@ -139,7 +155,7 @@ function offsetMs(raw: string, zone: string): number {
 // its clocks go forward (02:30 on that night does not exist). A time that
 // happens twice, when the clocks go back, resolves to the first of the two;
 // the command always echoes the absolute time it resolved.
-function localTime(raw: string, fields: WallClock): number {
+function localTime(raw: string, flag: string, fields: WallClock): number {
   const { year, month, day, hour, minute, second } = fields;
   const local = new Date(year, month - 1, day, hour, minute, second);
   const real = local.getFullYear() === year
@@ -148,13 +164,13 @@ function localTime(raw: string, fields: WallClock): number {
     && local.getHours() === hour
     && local.getMinutes() === minute
     && local.getSeconds() === second;
-  if (!real) throw notARealTime(raw);
+  if (!real) throw notARealTime(raw, flag);
   return local.getTime();
 }
 
-function notARealTime(raw: string): InvalidInputError {
+function notARealTime(raw: string, flag: string): InvalidInputError {
   return new InvalidInputError(
-    `--at "${raw}" is not a real date and time ` +
+    `${flag} "${raw}" is not a real date and time ` +
       '(an impossible date, or a local time skipped when the clocks change).',
   );
 }

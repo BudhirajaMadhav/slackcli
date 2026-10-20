@@ -17,6 +17,11 @@ const BROWSER_ONLY = new Set([
   'slackcli messages delete-draft',
   'slackcli emoji add',
   'slackcli emoji remove',
+  'slackcli saved add',
+  'slackcli saved update',
+  'slackcli saved complete',
+  'slackcli saved reopen',
+  'slackcli saved remove',
 ]);
 
 // Commands that only work with a standard app token (#379, #431): Slack refuses
@@ -59,6 +64,11 @@ const SLACK_WRITES = new Set([
   'slackcli usergroups disable',
   'slackcli emoji add',
   'slackcli emoji remove',
+  'slackcli saved add',
+  'slackcli saved update',
+  'slackcli saved complete',
+  'slackcli saved reopen',
+  'slackcli saved remove',
 ]);
 
 // The read commands that take --fields (#330), from the one table that also
