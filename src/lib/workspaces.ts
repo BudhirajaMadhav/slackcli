@@ -425,7 +425,8 @@ export interface MigrationResult {
 //   3. Read them back from the target and compare — a failed read-back or a
 //      mismatch both clean up the target and leave the source untouched.
 //   4. Flip `secret_backend` in the in-memory document by replacing the
-//      record with fresh metadata, and mark `secret_cleanup_pending: from` —
+//      record with fresh metadata (a file target's secrets are written onto it
+//      again), and mark `secret_cleanup_pending: from` —
 //      the OLD backend's copy still exists (deleting it is `migrateSecrets`'s
 //      job, not this function's, since it must happen only after this flip is
 //      durably saved) and this field is what makes that deletion retryable
@@ -499,6 +500,12 @@ export async function migrateWorkspaceCredentials(
     ...(target === 'file' ? {} : { secret_backend: target }),
     secret_cleanup_pending: from,
   } as WorkspaceConfig;
+  // The file backend keeps secrets on the record itself, and the verified copy
+  // went onto the record just replaced: write it onto the new one, or the old
+  // backend's cleanup would leave the profile with no credentials anywhere.
+  if (target === 'file') {
+    await storeCredentials(toStore, key, current);
+  }
 
   logger.info('Migrated {profile_key} from {from} to {to}', { profile_key: key, from, to: target });
   return { key, authType, from, to: target, migrated: true, pendingCleanup: from };

@@ -263,7 +263,9 @@ Order, all covered by `workspaces.test.ts`'s failure-injection tests:
    (`credentialsMatch()`); a mismatch cleans up the target the same way.
 4. Flip `secret_backend` on the in-memory record — replacing it with fresh
    metadata, which also clears an old *file* backend's inline secret as a side
-   effect, not a separate step.
+   effect, not a separate step. When the target is the file backend, the
+   verified secrets are written again onto that fresh record, since the copy
+   from step 2 sat on the record it replaced.
 
 The **IO wrapper** (`migrateSecrets()`) then does two things the document-level
 function deliberately does not: `saveWorkspaces()` to persist the flip

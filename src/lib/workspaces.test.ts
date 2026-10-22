@@ -602,6 +602,19 @@ describe('migrateWorkspaceCredentials', () => {
     expect(data.workspaces.T1).not.toHaveProperty('secret_backend');
   });
 
+  it('keeps the credentials inline when migrating back to file', async () => {
+    const data: WorkspacesData = {
+      workspaces: { T1: { ...metadataOf(standard()), secret_backend: 'keychain' } as WorkspaceConfig },
+    };
+    const keychain = new FakeKeychainStore();
+    keychain.secrets.set('T1:token', 'xoxb-abc');
+
+    await migrateOneWorkspace(data, backendsWith(data, keychain), 'T1', 'file', async () => {});
+
+    expect(data.workspaces.T1).toEqual(standard());
+    expect(keychain.secrets.size).toBe(0);
+  });
+
   it('throws for an unknown workspace', async () => {
     const data: WorkspacesData = { workspaces: {} };
     await expect(
