@@ -9,6 +9,7 @@ import {
   mergeWorkspaces,
   slackOriginFromApiUrl,
   isSlackWorkspaceUrl,
+  browserRequestFrom,
   SLACK_CLIENT_URL,
 } from './browser-auth';
 import { isSafeStartUrl } from './browser-launcher';
@@ -372,8 +373,19 @@ describe('slackOriginFromApiUrl', () => {
 
 // A fake CDP session: emits queued requests when the page navigates, and
 // answers the three commands the capture depends on.
+interface FakeRequest {
+  url: string;
+  postData?: string;
+  requestId?: string;
+  headers?: Record<string, string>;
+  /** Emitted as Network.requestWillBeSentExtraInfo for the same request id. */
+  wireHeaders?: Record<string, string>;
+  /** Emit the wire headers before the request, as Chrome sometimes does. */
+  wireFirst?: boolean;
+}
+
 interface FakeOptions {
-  requests?: Array<{ url: string; postData?: string }>;
+  requests?: FakeRequest[];
   cookies?: Array<{ name?: string; domain?: string; value?: string }>;
   localConfig?: string | null;
   throwOn?: string;
@@ -408,10 +420,14 @@ function makeFakeSession(options: FakeOptions = {}): CdpSession {
       }
       if (options.throwOn === method) throw new Error('boom');
       if (method === 'Page.navigate') {
-        for (const request of options.requests ?? []) {
-          for (const handler of handlers.get('Network.requestWillBeSent') ?? []) {
-            handler({ request });
-          }
+        const emit = (event: string, params: unknown) => {
+          for (const handler of handlers.get(event) ?? []) handler(params);
+        };
+        for (const { requestId, wireHeaders, wireFirst, ...request } of options.requests ?? []) {
+          const extraInfo = () => wireHeaders && emit('Network.requestWillBeSentExtraInfo', { requestId, headers: wireHeaders });
+          if (wireFirst) extraInfo();
+          emit('Network.requestWillBeSent', { requestId, request });
+          if (!wireFirst) extraInfo();
         }
       }
       if (method === 'Storage.getCookies' || method === 'Network.getCookies') {
@@ -1140,5 +1156,74 @@ describe('captureSlackTokens logging', () => {
     expect(result.ok).toBe(false);
     const failure = records.find((r) => r.message.join('').startsWith('Token capture failed'));
     expect(failure?.properties.reason).toBe('browser_closed');
+  });
+});
+
+// login-auto keeps the request the token came from, so the saved profile
+// replays it the way `auth parse-curl --login` does. Every value is fake.
+describe('browser request capture (login-auto)', () => {
+  const SESSION = 'xoxd-session/abc=';
+  const COOKIE = 'b=fakeb; d=xoxd-session%2Fabc%3D; lc=1';
+  const API_URL = 'https://alpha.slack.com/api/client.counts?_x_id=noversion-1.2&_x_csid=FAKE&slack_route=T1&fp=c7';
+  const BODY = MULTIPART_BODY.replace(
+    '------WebKitFormBoundaryAbc--\r\n',
+    '------WebKitFormBoundaryAbc\r\nContent-Disposition: form-data; name="_x_mode"\r\n\r\nonline\r\n------WebKitFormBoundaryAbc--\r\n',
+  );
+  const PAGE_HEADERS = { 'User-Agent': 'UA/page', 'Content-Type': 'multipart/form-data; boundary=x', 'sec-ch-ua': '"Chromium"' };
+  const WIRE_HEADERS = {
+    ':authority': 'alpha.slack.com',
+    'user-agent': 'UA/wire',
+    'cookie': COOKIE,
+    'sec-fetch-mode': 'cors',
+    'accept-encoding': 'gzip',
+  };
+  const request = { url: API_URL, postData: BODY, headers: PAGE_HEADERS };
+
+  describe('browserRequestFrom', () => {
+    it('keeps the wire headers over the page ones, the Cookie header verbatim, and the stable query and form', () => {
+      expect(browserRequestFrom(request, WIRE_HEADERS, SESSION)).toStrictEqual({
+        cookie: COOKIE,
+        request: {
+          headers: { 'user-agent': 'UA/wire', 'sec-ch-ua': '"Chromium"', 'sec-fetch-mode': 'cors' },
+          query: { _x_csid: 'FAKE', slack_route: 'T1', fp: 'c7' },
+          form: { _x_mode: 'online' },
+        },
+      });
+    });
+
+    it('refuses a request whose cookie is not the captured session', () => {
+      expect(browserRequestFrom(request, WIRE_HEADERS, 'xoxd-other')).toBeNull();
+      expect(browserRequestFrom(request, { 'user-agent': 'UA/wire' }, SESSION)).toBeNull();
+      expect(browserRequestFrom(request, { cookie: 'd=xoxd-%E0%A4%A' }, SESSION)).toBeNull();
+    });
+  });
+
+  const SESSION_COOKIES = [{ name: 'd', domain: '.slack.com', value: encodeURIComponent(SESSION) }];
+
+  it.each([false, true])('attaches the intercepted request to its workspace (wire headers first: %p)', async (wireFirst) => {
+    const session = makeFakeSession({
+      requests: [{ ...request, requestId: 'r1', wireHeaders: WIRE_HEADERS, wireFirst }],
+      cookies: SESSION_COOKIES,
+    });
+
+    const result = await captureSlackTokens(session, captureDeps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces[0].browserRequest).toStrictEqual(browserRequestFrom(request, WIRE_HEADERS, SESSION)!);
+  });
+
+  it('keeps no request when Chrome reported no wire headers, or for a localStorage-only workspace', async () => {
+    const session = makeFakeSession({
+      requests: [{ ...request, requestId: 'r1' }],
+      cookies: SESSION_COOKIES,
+      localConfig: JSON.stringify({ teams: { T2: { token: 'xoxc-beta-1', url: 'https://beta.slack.com/', id: 'T2' } } }),
+    });
+
+    const result = await captureSlackTokens(session, captureDeps);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.workspaces.map((w) => w.browserRequest)).toStrictEqual([undefined, undefined]);
   });
 });

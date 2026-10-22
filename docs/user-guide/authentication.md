@@ -111,6 +111,13 @@ prompt.
 Partial success is still success: if one captured workspace has a stale token,
 the others are still saved and the failure is reported.
 
+**The browser's request is kept too.** For each workspace whose token was seen
+on an API request, `login-auto` keeps that request's headers and the full
+`Cookie` header Chrome sent, and replays them on every call, as
+[`parse-curl`](#3-parse-a-curl-command) does — see there for why. A workspace
+found only in the browser's stored settings, and any workspace when Chrome does
+not report the headers it sent, falls back to the two tokens alone.
+
 **When the saved session has expired.** The browser profile outlives the Slack
 session it holds: Slack can expire or revoke that session (a workspace session
 limit, or "sign out of all other sessions") while the profile still carries the
@@ -143,6 +150,33 @@ This extracts the workspace URL and name, the `xoxd` token from the cookie
 header, and the `xoxc` token from the request body. Drop `--login` to print what
 was found without saving it.
 
+It also keeps the rest of the copied request, and every later call replays it:
+
+- the **full `Cookie` header**, exactly as copied (the `d=xoxd-…` cookie in it
+  is the session). It is a credential, so it is stored like the tokens — see
+  [where credentials are stored](#where-credentials-are-stored);
+- the **headers that identify your browser**: `user-agent`, `accept`,
+  `accept-language`, `origin`, `referer`, `sec-ch-ua*`, `sec-fetch-*`,
+  `priority` and the like. Headers about that one request (`content-type`,
+  `content-length`, `host`) and `authorization` are dropped;
+- the **stable query parameters** of the API URL (`slack_route`, `_x_csid`,
+  `_x_version_ts`, `fp`, …), without the per-call ones (`_x_id`,
+  `_x_num_retries`, `_x_reason`);
+- the web client's **constant form fields** (`_x_mode`, `_x_sonic`,
+  `_x_app_name`). With a copied request, calls are sent as multipart form data,
+  as the web client sends them.
+
+**Why.** Slack Enterprise Grid ends a browser session that shows up from a
+second client. A profile that sends only the `d` cookie with SlackCLI's own
+user agent looks like one, so the session dies after a few calls with
+`invalid_auth` and can sign your browser out too. Replaying the browser's own
+headers and cookies keeps the session on one client. Two consequences:
+
+- After your browser updates, its user agent changes: copy a fresh request and
+  run `parse-curl --login` again.
+- `parse-curl` reads Chrome's and Firefox's "Copy as cURL" (bash) output,
+  including `$'…'` quoting and the `--url` form newer Chrome versions use.
+
 Clipboard reading uses `pbpaste` on macOS, PowerShell on Windows, and
 `xclip`/`xsel` on Linux — install one of those if the clipboard path fails.
 
@@ -161,6 +195,12 @@ Where the values come from: open your workspace in a browser, open DevTools
 (F12), go to Network, refresh or send a message, pick any Slack API request, and
 read `d=xoxd-…` from the `Cookie` header and `"token":"xoxc-…"` from the request
 payload.
+
+`login-browser` stores only the two tokens, and sends them with a minimal set of
+headers of its own. On Enterprise Grid use `parse-curl` or `login-auto`
+instead, which keep the browser's headers and cookies
+([why](#3-parse-a-curl-command)). Logging in with `login-browser` over a profile
+that had them drops them.
 
 ## Check who you are signed in as
 
@@ -343,7 +383,17 @@ slackcli auth parse-curl --login --secret-backend=keychain
 ```
 
 `workspaces.json` still holds that profile's metadata, plus a
-`"secret_backend": "keychain"` marker — no token value. `auth list` shows which
+`"secret_backend": "keychain"` marker — no token value.
+
+A browser profile saved from a copied or intercepted request (see
+[parse-curl](#3-parse-a-curl-command)) has one more credential, the browser's
+full `Cookie` header. It goes wherever the tokens go: inline as `cookie_header`
+with the file backend, the Keychain item `<profile>:cookie` with the Keychain
+backend, and `auth migrate-secrets`, `auth remove` and `auth logout` move or
+delete it with the tokens. The rest of that request — headers, query parameters
+and form fields — is not secret and stays in `workspaces.json` as
+`browser_request`. It does identify your browser (its user agent, platform and
+language). `auth list` shows which
 backend each profile uses. The flag only takes effect on a **new** profile; a
 token refresh of an existing profile (e.g. running `auth login` again for the
 same identity) keeps whatever backend it is already on, so an ordinary refresh

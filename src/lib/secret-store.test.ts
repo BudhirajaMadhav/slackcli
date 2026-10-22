@@ -482,3 +482,107 @@ describe('secret-store logging', () => {
     expect(routed?.properties).toMatchObject({ profile_key: 'work', backend: 'keychain' });
   });
 });
+
+describe('browser Cookie header (kind "cookie")', () => {
+  // A profile saved from a copied browser request. Every value is fake.
+  const withSnapshot = (): BrowserAuthConfig => browser({
+    cookie_header: 'b=fakeb; d=xoxd-abc; lc=1',
+    browser_request: { headers: { 'user-agent': 'UA/1' }, query: { fp: 'c7' }, form: { _x_mode: 'online' } },
+  });
+
+  // A stateful fake of the `security` CLI: a real round-trip through
+  // MacOSKeychainSecretStore's argv handling, without a real keychain.
+  function fakeKeychain(): { store: MacOSKeychainSecretStore; items: Map<string, string> } {
+    const items = new Map<string, string>();
+    const account = (args: string[]) => args[args.indexOf('-a') + 1];
+    const run = async (args: string[]): Promise<SecurityCliResult> => {
+      const key = account(args);
+      if (args[0] === 'add-generic-password') items.set(key, args[args.indexOf('-w') + 1]);
+      if (args[0] === 'find-generic-password') {
+        const value = items.get(key);
+        return value === undefined ? { code: 44, stdout: '', stderr: 'could not be found' } : { code: 0, stdout: value, stderr: '' };
+      }
+      if (args[0] === 'delete-generic-password' && !items.delete(key)) {
+        return { code: 44, stdout: '', stderr: 'could not be found' };
+      }
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    return { store: new MacOSKeychainSecretStore(run, 'darwin'), items };
+  }
+
+  it('is a key kind of its own', () => {
+    expect(parseSecretKey(secretKey('grid:me', 'cookie'))).toEqual({ ref: 'grid:me', kind: 'cookie' });
+  });
+
+  it('is stripped from metadata, which keeps the non-secret request snapshot', () => {
+    const meta = metadataOf(withSnapshot());
+    expect(meta).not.toHaveProperty('cookie_header');
+    expect(meta).toHaveProperty('browser_request', withSnapshot().browser_request);
+  });
+
+  it('is stored as a third browser secret and round-trips', async () => {
+    const store = new MemoryStore();
+    await storeCredentials(store, 'T1', withSnapshot());
+    expect(store.secrets.get('T1:cookie')).toBe('b=fakeb; d=xoxd-abc; lc=1');
+    expect(await loadCredentials(store, 'T1', metadataOf(withSnapshot()))).toEqual(withSnapshot());
+  });
+
+  it('is never looked up for a profile without a snapshot, even if one is stored', async () => {
+    const store = new MemoryStore();
+    await storeCredentials(store, 'T1', withSnapshot());
+    const asked: string[] = [];
+    const get = store.get.bind(store);
+    store.get = async (key) => { asked.push(key); return get(key); };
+
+    const loaded = await loadCredentials(store, 'T1', metadataOf(browser()));
+
+    expect(asked).toEqual(['T1:xoxc', 'T1:xoxd']);
+    expect(loaded).toEqual(browser());
+  });
+
+  it('is required once the profile has a snapshot', async () => {
+    const store = new MemoryStore();
+    await storeCredentials(store, 'T1', browser());
+    const err = await loadCredentials(store, 'T1', metadataOf(withSnapshot())).catch((e) => e);
+    expect(err).toBeInstanceOf(MissingCredentialError);
+    expect(err.kind).toBe('cookie');
+    expect(err.message).not.toContain('xoxd-abc');
+  });
+
+  it('is deleted with the other browser secrets', async () => {
+    const store = new MemoryStore();
+    await storeCredentials(store, 'T1', withSnapshot());
+    await deleteCredentials(store, 'T1', 'browser');
+    expect(store.secrets.size).toBe(0);
+  });
+
+  it('lives inline as cookie_header on a file profile', async () => {
+    const data: WorkspacesData = { workspaces: { T1: metadataOf(withSnapshot()) as WorkspaceConfig } };
+    const store = new FileSecretStore(data);
+    await storeCredentials(store, 'T1', withSnapshot());
+    expect((data.workspaces.T1 as BrowserAuthConfig).cookie_header).toBe('b=fakeb; d=xoxd-abc; lc=1');
+    expect(await loadCredentials(store, 'T1', metadataOf(withSnapshot()))).toEqual(withSnapshot());
+    await deleteCredentials(store, 'T1', 'browser');
+    expect(data.workspaces.T1).not.toHaveProperty('cookie_header');
+  });
+
+  it('is refused on a standard profile by the file backend', async () => {
+    const data: WorkspacesData = { workspaces: { T1: standard() } };
+    await expect(new FileSecretStore(data).set('T1:cookie', 'd=x')).rejects.toThrow('cannot hold a cookie credential');
+  });
+
+  it('lives in the Keychain under account <profile>:cookie on a keychain profile', async () => {
+    const { store, items } = fakeKeychain();
+    await storeCredentials(store, 'grid-z', withSnapshot());
+    expect(items.get('grid-z:cookie')).toBe('b=fakeb; d=xoxd-abc; lc=1');
+    expect(await loadCredentials(store, 'grid-z', metadataOf(withSnapshot()))).toEqual(withSnapshot());
+    await deleteCredentials(store, 'grid-z', 'browser');
+    expect(items.size).toBe(0);
+  });
+
+  it('counts in credentialsMatch', () => {
+    expect(credentialsMatch(withSnapshot(), withSnapshot())).toBe(true);
+    expect(credentialsMatch(withSnapshot(), { ...withSnapshot(), cookie_header: 'd=other' })).toBe(false);
+    expect(credentialsMatch(withSnapshot(), browser())).toBe(false);
+  });
+});

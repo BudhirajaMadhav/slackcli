@@ -12,6 +12,7 @@ import {
   deleteCredentials,
   loadCredentials,
   metadataOf,
+  secretKey,
   storeCredentials,
   type SecretStore,
 } from './secret-store.ts';
@@ -282,6 +283,16 @@ export async function putWorkspace(
   // types never overlap, so this cannot delete what was just written.
   if (previous && previous.auth_type !== config.auth_type) {
     await deleteCredentials(store, key, previous.auth_type);
+  }
+
+  // A browser session refreshed without its browser's request (login-browser)
+  // must not leave the old Cookie header behind: its `d` is the old session.
+  // The record above already lost the snapshot that would read it; on a file
+  // profile the inline copy went with the old record, so this matters for the
+  // Keychain.
+  if (previous?.auth_type === 'browser' && previous.browser_request
+    && config.auth_type === 'browser' && !config.cookie_header) {
+    await store.delete(secretKey(key, 'cookie'));
   }
 
   // Set as default if it's the first workspace

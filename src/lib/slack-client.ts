@@ -4,6 +4,7 @@ import { getLogger } from '@logtape/logtape';
 import { basename } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import type {
+  BrowserAuthConfig,
   DryRunWorkspace,
   SlackAuthTestResponse,
   ScheduledMessageSummary,
@@ -86,12 +87,17 @@ function browserFormValue(value: any): string {
 // The body of a browser-auth call, token first and `undefined` params left out.
 // A Blob param means a multipart FormData body with no Content-Type, so fetch
 // sets the multipart type with its boundary; anything else is urlencoded.
+//
+// `browserForm` is the captured browser's constant fields (_x_mode, ...). With
+// it the body is always multipart, as the web client sends every call, and
+// those fields follow the call's own; a param of the same name wins.
 function buildBrowserBody(
   params: Record<string, any>,
   xoxcToken: string,
+  browserForm?: Record<string, string>,
 ): { body: FormData | URLSearchParams; contentType?: string } {
   const entries = Object.entries(params).filter(([, value]) => value !== undefined);
-  if (entries.some(([, value]) => value instanceof Blob)) {
+  if (browserForm || entries.some(([, value]) => value instanceof Blob)) {
     const form = new FormData();
     form.append('token', xoxcToken);
     for (const [key, value] of entries) {
@@ -100,6 +106,9 @@ function buildBrowserBody(
       } else {
         form.append(key, browserFormValue(value));
       }
+    }
+    for (const [key, value] of Object.entries(browserForm ?? {})) {
+      if (!form.has(key)) form.append(key, value);
     }
     return { body: form };
   }
@@ -240,14 +249,37 @@ function assertSlackFileUrl(url: string): URL {
   return parsedUrl;
 }
 
+const SLACK_WEB_ORIGIN = 'https://app.slack.com';
+
+// The captured browser's headers with its full Cookie header, for a browser
+// profile saved with its browser's request; undefined for one saved without.
+//
+// Slack Enterprise Grid ends a browser session that shows up from a second
+// client, and can sign the browser out with it. Sending the browser's own
+// headers and every cookie it sent, verbatim, keeps the session's client the
+// same; the `d` cookie inside that header is the session. The Origin falls
+// back to the web client's only when the copied request had none.
+function browserSnapshotHeaders(config: BrowserAuthConfig): Record<string, string> | undefined {
+  if (!config.browser_request || !config.cookie_header) return undefined;
+  return { origin: SLACK_WEB_ORIGIN, ...config.browser_request.headers, cookie: config.cookie_header };
+}
+
 function buildFileAuthHeaders(config: WorkspaceConfig): Record<string, string> {
   if (config.auth_type === 'standard') {
     return { Authorization: `Bearer ${config.token}` };
   }
-  return {
+  return browserSnapshotHeaders(config) ?? {
     Cookie: `d=${encodeURIComponent(config.xoxd_token)}`,
-    Origin: 'https://app.slack.com',
+    Origin: SLACK_WEB_ORIGIN,
   };
+}
+
+// The API URL of a browser-auth call, with the captured browser's stable query
+// parameters (slack_route, _x_csid, ...) when the profile has them.
+function browserApiUrl(config: BrowserAuthConfig, method: string): string {
+  const url = `${config.workspace_url}/api/${method}`;
+  const query = new URLSearchParams(config.browser_request?.query ?? {}).toString();
+  return query ? `${url}?${query}` : url;
 }
 
 // Returns the next URL for a redirect response, or null when the response is
@@ -535,13 +567,13 @@ export class SlackClient {
       throw new Error('Invalid auth type');
     }
 
-    const url = `${this.config.workspace_url}/api/${method}`;
+    const url = browserApiUrl(this.config, method);
 
-    // URL-encode the xoxd token for the cookie
-    const encodedXoxdToken = encodeURIComponent(this.config.xoxd_token);
-    const baseHeaders: Record<string, string> = {
-      'Cookie': `d=${encodedXoxdToken}`,
-      'Origin': 'https://app.slack.com',
+    // A profile saved with its browser's request sends that browser's headers
+    // and cookies; one saved without sends the xoxd token as the only cookie.
+    const baseHeaders: Record<string, string> = browserSnapshotHeaders(this.config) ?? {
+      'Cookie': `d=${encodeURIComponent(this.config.xoxd_token)}`,
+      'Origin': SLACK_WEB_ORIGIN,
       'User-Agent': 'Mozilla/5.0 (compatible; SlackCLI/0.1.0)',
     };
 
@@ -549,7 +581,7 @@ export class SlackClient {
     // buildBrowserBody(). Either way the call stays inside request() ->
     // attempt(), so it keeps its rate-limiter slot, retry policy and
     // auth-error mapping.
-    const { body, contentType } = buildBrowserBody(params, this.config.xoxc_token);
+    const { body, contentType } = buildBrowserBody(params, this.config.xoxc_token, this.config.browser_request?.form);
     const headers = contentType ? { ...baseHeaders, 'Content-Type': contentType } : baseHeaders;
 
     let response: Response;

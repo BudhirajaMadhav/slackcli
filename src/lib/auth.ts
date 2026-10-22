@@ -13,6 +13,7 @@ import {
 import type {
   StandardAuthConfig,
   BrowserAuthConfig,
+  CapturedBrowserRequest,
   WorkspaceConfig,
   SecretBackend,
   IdentityResult,
@@ -107,14 +108,16 @@ export async function authenticateStandard(
   }
 }
 
-// Authenticate with browser tokens
+// Authenticate with browser tokens. With `captured`, the auth.test call and
+// every later call replay the browser's headers and cookies.
 export async function authenticateBrowser(
   xoxdToken: string,
   xoxcToken: string,
   workspaceUrl: string,
   workspaceName?: string,
   profile?: string,
-  secretBackend: SecretBackend = 'file'
+  secretBackend: SecretBackend = 'file',
+  captured?: CapturedBrowserRequest
 ): Promise<AuthResult> {
   // Extract workspace name from URL if not provided
   const defaultName = extractSlackWorkspaceName(workspaceUrl);
@@ -127,6 +130,7 @@ export async function authenticateBrowser(
     auth_type: 'browser',
     xoxd_token: xoxdToken,
     xoxc_token: xoxcToken,
+    ...(captured ? { cookie_header: captured.cookie, browser_request: captured.request } : {}),
   };
 
   const client = new SlackClient(tempConfig);
@@ -307,7 +311,8 @@ async function enrolCapturedWorkspaces(
         workspace.workspaceUrl,
         workspace.teamName,
         undefined,
-        secretBackend
+        secretBackend,
+        workspace.browserRequest
       );
       saved.push(config);
     } catch (err: any) {
