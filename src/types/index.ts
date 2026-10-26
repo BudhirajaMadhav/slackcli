@@ -32,6 +32,27 @@ export interface StandardAuthConfig {
   token_type: TokenType;
 }
 
+// What the browser sent besides the two tokens, taken from the request a
+// session was captured from. Slack Enterprise Grid ends a session that shows up
+// from a second client, so a browser profile replays these verbatim. Nothing
+// here is a secret: the Cookie header is kept apart, in the SecretStore.
+export interface BrowserRequestSnapshot {
+  // Header names lower-cased, values as sent (user-agent, sec-ch-ua, ...).
+  headers: Record<string, string>;
+  // The stable query parameters of the web client's API URL (slack_route, _x_csid, ...).
+  query: Record<string, string>;
+  // The constant form fields of the web client's API body (_x_mode, _x_sonic, _x_app_name).
+  form: Record<string, string>;
+}
+
+// A browser request a session was captured from: its full Cookie header (a
+// secret) and the rest of what it sent. `auth parse-curl` reads it from the
+// copied cURL, `auth login-auto` from the intercepted request.
+export interface CapturedBrowserRequest {
+  cookie: string;
+  request: BrowserRequestSnapshot;
+}
+
 export interface BrowserAuthConfig {
   workspace_id: string;
   workspace_name: string;
@@ -43,6 +64,12 @@ export interface BrowserAuthConfig {
   auth_type: 'browser';
   xoxd_token: string;
   xoxc_token: string;
+  // Absent on profiles captured without the browser's request (login-browser,
+  // and every profile from before it was kept); those send the minimal headers.
+  browser_request?: BrowserRequestSnapshot;
+  // The full Cookie header the browser sent. A secret, stored through the
+  // SecretStore as kind `cookie`; present exactly when `browser_request` is.
+  cookie_header?: string;
 }
 
 export type WorkspaceConfig = StandardAuthConfig | BrowserAuthConfig;
@@ -51,7 +78,7 @@ export type WorkspaceConfig = StandardAuthConfig | BrowserAuthConfig;
 // resolved through a SecretStore (src/lib/secret-store.ts), never through this.
 export type WorkspaceMetadata =
   | Omit<StandardAuthConfig, 'token'>
-  | Omit<BrowserAuthConfig, 'xoxc_token' | 'xoxd_token'>;
+  | Omit<BrowserAuthConfig, 'xoxc_token' | 'xoxd_token' | 'cookie_header'>;
 
 export interface WorkspacesData {
   default_workspace?: string;

@@ -193,6 +193,8 @@ const HELP = {
       'The cURL command is read from the argument, --from-clipboard, piped stdin, or pasted interactively ' +
         '(end with an empty line), in that order.',
       'Prefer --from-clipboard or stdin over the argument: an argument lands in shell history.',
+      'With --login the profile also keeps the copied request\'s full Cookie header (stored like the tokens) and its ' +
+        'browser headers, and every call replays them, so Slack Enterprise Grid sees the same client as the browser.',
       'Without --login it stores nothing, but prints the full xoxd/xoxc tokens on stdout as a ready-to-run ' +
         '"auth login-browser" command: do not capture or log that output. With --login only a 20-character prefix is shown.',
     ],
@@ -277,7 +279,8 @@ async function loginWithParsedTokens(parsed: ParsedCurlResult, secretBackend: Se
       parsed.workspaceUrl,
       parsed.workspaceName,
       undefined,
-      secretBackend
+      secretBackend,
+      { cookie: parsed.cookie, request: parsed.request }
     );
     spinner.succeed('Authentication successful!');
     success(`Authenticated as workspace: ${config.workspace_name}`);
@@ -290,10 +293,23 @@ async function loginWithParsedTokens(parsed: ParsedCurlResult, secretBackend: Se
   }
 }
 
+// Counts only: the cookie string is a secret, and header values identify the
+// user's browser.
+function describeCapturedRequest(parsed: Pick<ParsedCurlResult, 'cookie' | 'request'>): string {
+  const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  const cookies = parsed.cookie.split(';').filter((part) => part.trim()).length;
+  return [
+    count(Object.keys(parsed.request.headers).length, 'header'),
+    count(cookies, 'cookie'),
+    count(Object.keys(parsed.request.query).length, 'query parameter'),
+    count(Object.keys(parsed.request.form).length, 'form field'),
+  ].join(', ');
+}
+
 function printLoginHint(parsed: ParsedCurlResult): void {
   writeText(chalk.bold('To login with these tokens, run:\n'));
   writeText(chalk.cyan('  slackcli auth parse-curl --login'));
-  writeText(chalk.gray('\nOr manually:\n'));
+  writeText(chalk.gray('\nOr manually (keeps only the two tokens, not the browser\'s headers and cookies):\n'));
   writeText(`  slackcli auth login-browser \\`);
   writeText(`    --xoxd="${parsed.xoxd}" \\`);
   writeText(`    --xoxc="${parsed.xoxc}" \\`);
@@ -671,6 +687,8 @@ export function createAuthCommand(): Command {
         writeText(chalk.bold('Tokens:'));
         writeText(`  xoxd: ${chalk.green(parsed.xoxd.substring(0, 20))}...${tokenLength(parsed.xoxd)}`);
         writeText(`  xoxc: ${chalk.green(parsed.xoxc.substring(0, 20))}...${tokenLength(parsed.xoxc)}\n`);
+        writeText(chalk.bold('Browser request (kept with --login, replayed on every call):'));
+        writeText(`  ${describeCapturedRequest(parsed)}\n`);
 
         // If --login flag is set, authenticate directly
         if (options.login) {

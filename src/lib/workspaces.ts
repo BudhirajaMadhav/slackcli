@@ -12,6 +12,7 @@ import {
   deleteCredentials,
   loadCredentials,
   metadataOf,
+  secretKey,
   storeCredentials,
   type SecretStore,
 } from './secret-store.ts';
@@ -284,6 +285,16 @@ export async function putWorkspace(
     await deleteCredentials(store, key, previous.auth_type);
   }
 
+  // A browser session refreshed without its browser's request (login-browser)
+  // must not leave the old Cookie header behind: its `d` is the old session.
+  // The record above already lost the snapshot that would read it; on a file
+  // profile the inline copy went with the old record, so this matters for the
+  // Keychain.
+  if (previous?.auth_type === 'browser' && previous.browser_request
+    && config.auth_type === 'browser' && !config.cookie_header) {
+    await store.delete(secretKey(key, 'cookie'));
+  }
+
   // Set as default if it's the first workspace
   if (!data.default_workspace) {
     data.default_workspace = key;
@@ -414,7 +425,8 @@ export interface MigrationResult {
 //   3. Read them back from the target and compare — a failed read-back or a
 //      mismatch both clean up the target and leave the source untouched.
 //   4. Flip `secret_backend` in the in-memory document by replacing the
-//      record with fresh metadata, and mark `secret_cleanup_pending: from` —
+//      record with fresh metadata (a file target's secrets are written onto it
+//      again), and mark `secret_cleanup_pending: from` —
 //      the OLD backend's copy still exists (deleting it is `migrateSecrets`'s
 //      job, not this function's, since it must happen only after this flip is
 //      durably saved) and this field is what makes that deletion retryable
@@ -488,6 +500,12 @@ export async function migrateWorkspaceCredentials(
     ...(target === 'file' ? {} : { secret_backend: target }),
     secret_cleanup_pending: from,
   } as WorkspaceConfig;
+  // The file backend keeps secrets on the record itself, and the verified copy
+  // went onto the record just replaced: write it onto the new one, or the old
+  // backend's cleanup would leave the profile with no credentials anywhere.
+  if (target === 'file') {
+    await storeCredentials(toStore, key, current);
+  }
 
   logger.info('Migrated {profile_key} from {from} to {to}', { profile_key: key, from, to: target });
   return { key, authType, from, to: target, migrated: true, pendingCleanup: from };

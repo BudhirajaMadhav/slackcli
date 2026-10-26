@@ -78,6 +78,9 @@ deleted: log in to that workspace again. Details in
   `slackcli auth login-auto --headless`, or re-run `parse-curl` / `login-browser`
   with fresh values.
 - The workspace URL must be `https://yourteam.slack.com`.
+- On Enterprise Grid, a session that works for a few calls and then fails is a
+  different problem: see
+  [Enterprise Grid ends the browser session after a few calls](#enterprise-grid-ends-the-browser-session-after-a-few-calls).
 
 ## `Authentication failed for profile …` (`invalid_auth`, `not_authed`, `token_expired`, `token_revoked`, `account_inactive`)
 
@@ -115,6 +118,29 @@ your profile key and default.
 If Slack refuses a token while you are logging in, the message says the token
 was rejected instead, since there is no stored profile to refresh yet — see
 [Authentication fails](#authentication-fails).
+
+On Enterprise Grid, an `invalid_auth` that comes back a few calls after a fresh
+login is not an expired session — see the next section.
+
+## Enterprise Grid ends the browser session after a few calls
+
+Symptom: right after `auth parse-curl --login`, a handful of commands work, then
+every call fails with `invalid_auth`, even with seconds between calls. Your
+browser may be signed out of Slack at the same moment.
+
+Cause: Slack Enterprise Grid ends a browser session that shows up from a second
+client. A profile that sends only the `d` cookie with SlackCLI's own user agent
+is that second client.
+
+Fix: log in again with `slackcli auth parse-curl --login` and a **fresh**
+request copied from the browser (or with `auth login-auto`). Both keep the
+browser's headers and its full `Cookie` header and replay them on every call, so
+Slack sees the same client
+([details](authentication.md#3-parse-a-curl-command)). The `parse-curl` output
+lists what it kept (`Browser request: … headers, … cookies, …`). Profiles saved
+by an older version, or with `login-browser`, still send the minimal headers
+until you log in this way. After a browser update, copy a fresh request again:
+the stored user agent no longer matches the browser.
 
 ## Permission errors on channels or messages
 

@@ -23,7 +23,9 @@
  */
 
 import { getLogger } from '@logtape/logtape';
+import type { CapturedBrowserRequest } from '../types/index.ts';
 import { errorMessageForLog } from './tildify.ts';
+import { snapshotBrowserRequest } from './curl-parser.ts';
 import { connectCdpSocket, createCdpSession, type CdpSession } from './cdp-client.ts';
 import {
   launchBrowser,
@@ -45,6 +47,12 @@ export interface CapturedWorkspace {
   xoxc: string;
   teamId?: string;
   teamName?: string;
+  /**
+   * The intercepted API request the token came from, replayed on every call.
+   * Absent for a workspace known only from localStorage, and when Chrome did
+   * not report the request's wire headers.
+   */
+  browserRequest?: CapturedBrowserRequest;
 }
 
 export type CaptureResult =
@@ -339,7 +347,7 @@ export async function captureSlackTokens(
   });
 
   const intercepted = new Map<string, CapturedWorkspace>();
-  registerInterceptors(session, intercepted, rejected);
+  const attachBrowserRequests = registerInterceptors(session, intercepted, rejected);
 
   const setupFailure = await startCapture(session, options.startUrl ?? SLACK_CLIENT_URL);
   if (setupFailure) return logFailure(setupFailure);
@@ -398,6 +406,7 @@ export async function captureSlackTokens(
     });
   }
 
+  attachBrowserRequests(xoxd);
   const workspaces = mergeWorkspaces([...intercepted.values()], fromLocalConfig);
   logger.info('Token capture succeeded: {workspaces} workspaces', {
     workspaces: workspaces.length,
@@ -412,17 +421,68 @@ function logFailure(result: CaptureFailureResult): CaptureResult {
   return result;
 }
 
+/** An intercepted API request, as `Network.requestWillBeSent` reports it. */
+export interface InterceptedRequest {
+  url: string;
+  postData: string;
+  /** The page-level headers; Chrome adds Cookie, sec-fetch-* and others later. */
+  headers: Record<string, unknown>;
+}
+
 /**
- * Record the first `xoxc-*` token seen on each workspace's API traffic.
+ * The request to replay for an intercepted API call: Chrome's wire headers
+ * (`Network.requestWillBeSentExtraInfo`, the only place the Cookie header
+ * and the network stack's headers appear) over the page-level ones. Null when
+ * the Cookie header sent does not hold the session cookie read from the
+ * store — a request from before the sign-in finished.
+ */
+export function browserRequestFrom(
+  request: InterceptedRequest,
+  wireHeaders: Record<string, unknown>,
+  xoxd: string
+): CapturedBrowserRequest | null {
+  const headers = new Map<string, string>();
+  for (const source of [request.headers, wireHeaders]) {
+    for (const [name, value] of Object.entries(source ?? {})) {
+      if (typeof value === 'string') headers.set(name.toLowerCase(), value);
+    }
+  }
+  const cookie = headers.get('cookie') ?? '';
+  const sessionCookie = /(?:^|;\s*)d=([^;]+)/.exec(cookie)?.[1];
+  let decoded: string | undefined;
+  try {
+    decoded = sessionCookie && decodeURIComponent(sessionCookie);
+  } catch {
+    return null;
+  }
+  if (decoded !== xoxd) return null;
+  return { cookie, request: snapshotBrowserRequest(request.url, headers, request.postData) };
+}
+
+/**
+ * How many requests' wire headers are kept while waiting for the request they
+ * belong to: Chrome does not order the two events, and the client makes
+ * hundreds of calls during a sign-in.
+ */
+const WIRE_HEADERS_KEPT = 200;
+
+/**
+ * Record the first `xoxc-*` token seen on each workspace's API traffic, and the
+ * request that carried it.
  *
  * Writes into the caller's map: the capture reads it after every poll, so
- * the handler and the loop must share the one instance.
+ * the handler and the loop must share the one instance. Returns the step that
+ * attaches each recorded request to its workspace, run once the session
+ * cookie is known.
  */
 function registerInterceptors(
   session: CdpSession,
   intercepted: Map<string, CapturedWorkspace>,
   rejected: ReadonlySet<string>
-): void {
+): (xoxd: string) => void {
+  const sentBy = new Map<string, InterceptedRequest & { requestId: unknown }>();
+  const wireHeaders = new Map<unknown, Record<string, unknown>>();
+
   session.on('Network.requestWillBeSent', (params: any) => {
     const url = params?.request?.url;
     const postData = params?.request?.postData;
@@ -434,11 +494,31 @@ function registerInterceptors(
     const xoxc = extractXoxcFromPostData(postData);
     if (xoxc && !rejected.has(xoxc)) {
       intercepted.set(origin, { workspaceUrl: origin, xoxc });
+      sentBy.set(origin, { requestId: params.requestId, url, postData, headers: params.request.headers ?? {} });
       logger.debug('xoxc token found on an intercepted API request ({count} workspaces so far)', {
         count: intercepted.size,
       });
     }
   });
+
+  session.on('Network.requestWillBeSentExtraInfo', (params: any) => {
+    if (params?.requestId === undefined || !params.headers) return;
+    wireHeaders.set(params.requestId, params.headers);
+    if (wireHeaders.size > WIRE_HEADERS_KEPT) wireHeaders.delete(wireHeaders.keys().next().value);
+  });
+
+  return (xoxd) => {
+    for (const [origin, request] of sentBy) {
+      const workspace = intercepted.get(origin);
+      const wire = wireHeaders.get(request.requestId);
+      const browserRequest = workspace && wire && browserRequestFrom(request, wire, xoxd);
+      if (browserRequest) workspace.browserRequest = browserRequest;
+    }
+    logger.debug('Browser request kept for {kept} of {intercepted} intercepted workspaces', {
+      kept: [...intercepted.values()].filter((workspace) => workspace.browserRequest).length,
+      intercepted: intercepted.size,
+    });
+  };
 }
 
 /** Enable the CDP domains the capture uses and open Slack. Null on success. */

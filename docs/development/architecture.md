@@ -56,7 +56,7 @@ important thing to understand about this codebase.
 |---|---|---|
 | Tokens | `xoxb-*` / `xoxp-*` | `xoxd-*` cookie + `xoxc-*` token |
 | Transport | `@slack/web-api` `WebClient` | raw `fetch` to `<workspace_url>/api/<method>` |
-| Auth carried by | SDK bearer token | `Cookie: d=<urlencoded xoxd>` + `token` form field |
+| Auth carried by | SDK bearer token | `Cookie: d=<urlencoded xoxd>` + `token` form field; with a captured browser request, that browser's headers and full `Cookie` header instead (below) |
 | Discriminated by | `config.auth_type === 'standard'` | `config.auth_type === 'browser'` |
 
 `SlackClient.request()` in `src/lib/slack-client.ts` is the fork:
@@ -71,7 +71,24 @@ async request(method: string, params = {}) {
 ```
 
 Everything above it — every `listConversations`, `postMessage`, `searchMessages`
-— is auth-agnostic and goes through `request()`. **New API calls belong there,
+— is auth-agnostic and goes through `request()`.
+
+### Replaying the browser's request
+
+Slack Enterprise Grid ends a browser session that shows up from a second
+client, and can sign the browser out with it. So a browser profile saved from a
+real request — `auth parse-curl` (the copied cURL) or `auth login-auto` (the
+intercepted request) — keeps what that request sent besides the tokens:
+`browser_request` (`BrowserRequestSnapshot`: identifying headers, the stable
+query parameters, the constant form fields; metadata) and `cookie_header` (the
+full `Cookie` header; a secret, kind `cookie`). `browserRequest()` and
+`fetchFile()` then send those headers and that `Cookie` header verbatim instead
+of `d=<xoxd>` and SlackCLI's user agent, add the query parameters to the API URL,
+and send a multipart body with the form fields after the call's own. What is
+kept is decided once, in `snapshotBrowserRequest()` (`curl-parser.ts`), for both
+capture paths. A profile without `browser_request` (`login-browser`, and every
+profile saved before) sends exactly what it always did. The file upload `POST`
+to Slack's pre-signed `upload_url` carries no credential and is unchanged. **New API calls belong there,
 not in a command file.**
 
 ### Throttling
@@ -187,10 +204,10 @@ that predate the `profile` and `user_id` fields — the tests encode that.
 
 ### Credentials go through a `SecretStore`
 
-Secrets (`token`, `xoxc_token`, `xoxd_token`) are never read or written on a
-record directly. `src/lib/secret-store.ts` defines a small `SecretStore`
-interface (`get`/`set`/`delete` on string keys of the form
-`<profile key>:<token|xoxc|xoxd>`), and `workspaces.ts` splits every config into
+Secrets (`token`, `xoxc_token`, `xoxd_token`, `cookie_header`) are never read or
+written on a record directly. `src/lib/secret-store.ts` defines a small
+`SecretStore` interface (`get`/`set`/`delete` on string keys of the form
+`<profile key>:<token|xoxc|xoxd|cookie>`), and `workspaces.ts` splits every config into
 metadata (`metadataOf()`) plus secrets (`storeCredentials()` /
 `loadCredentials()` / `deleteCredentials()`).
 
@@ -198,7 +215,7 @@ metadata (`metadataOf()`) plus secrets (`storeCredentials()` /
   names — so an all-file `workspaces.json` is byte-for-byte unchanged. It
   mutates the loaded document; `saveWorkspaces()` still does the one write.
 - `MacOSKeychainSecretStore` (macOS only) shells out to the `security` CLI
-  (service `slackcli`, account `<profile key>:<token|xoxc|xoxd>`) rather than
+  (service `slackcli`, account `<profile key>:<token|xoxc|xoxd|cookie>`) rather than
   an FFI binding — the `cdp-client.ts` trade-off again. Its `SecurityCliRunner`
   is injectable, the same seam `cdp-client.test.ts` uses for an untestable
   transport, so it is fully unit-tested without a real Mac or keychain.
@@ -246,7 +263,9 @@ Order, all covered by `workspaces.test.ts`'s failure-injection tests:
    (`credentialsMatch()`); a mismatch cleans up the target the same way.
 4. Flip `secret_backend` on the in-memory record — replacing it with fresh
    metadata, which also clears an old *file* backend's inline secret as a side
-   effect, not a separate step.
+   effect, not a separate step. When the target is the file backend, the
+   verified secrets are written again onto that fresh record, since the copy
+   from step 2 sat on the record it replaced.
 
 The **IO wrapper** (`migrateSecrets()`) then does two things the document-level
 function deliberately does not: `saveWorkspaces()` to persist the flip
@@ -311,7 +330,12 @@ Three modules, in order:
 3. **`browser-auth.ts`** — captures the pair. The `xoxc-*` token comes from
    intercepted API requests (which proves it is live); the `xoxd-*` value comes
    from the browser's cookie store, because the `d` cookie is `HttpOnly` and page
-   JavaScript cannot read it. It also reads `localConfig_v2` from localStorage to
+   JavaScript cannot read it. The intercepted request itself is kept too
+   (`browserRequestFrom()`): its page-level headers from
+   `Network.requestWillBeSent`, overlaid with the headers Chrome put on the wire
+   from `Network.requestWillBeSentExtraInfo` (the only event carrying `Cookie`
+   and `sec-fetch-*`; the two are matched by request id, in either order), and
+   only when that `Cookie` header holds the same `d` session as the store. It also reads `localConfig_v2` from localStorage to
    enumerate workspaces the user is signed into but has not opened — that union
    is why one sign-in enrols every workspace. localStorage is Slack client
    internals and may change shape without notice, so a failure to read it
@@ -330,7 +354,7 @@ Each is dependency-free and pure, so each is directly testable:
 
 | Module | Job |
 |---|---|
-| `curl-parser.ts` | Pull `xoxd`/`xoxc` out of a DevTools cURL command. Handles URL-encoded tokens, `-b` / `--cookie` / `-H 'Cookie:'`, and enterprise Slack URLs. The most thoroughly tested file in the repo — use it as the model for new tests. |
+| `curl-parser.ts` | Pull `xoxd`/`xoxc`, the full `Cookie` header and the browser request snapshot out of a DevTools cURL command. Splits the command with a one-pass bash tokenizer (`shellWords()`: `'…'`, `$'…'` ANSI-C escapes, `"…"`, continuations), then reads `--url` or the positional URL, `-b` / `--cookie` / `-H 'Cookie:'` and `--data` / `--data-raw`. The most thoroughly tested file in the repo — use it as the model for new tests. |
 | `slack-url-parser.ts` | Normalise Slack URLs, permalinks, and timestamps into IDs. Also produces the workspace-mismatch warning. |
 | `mrkdwn.ts` | Slack mrkdwn → `rich_text` blocks, for drafts. |
 | `canvas-parser.ts` | Slack canvas (Quip-based) HTML → Markdown, zero dependencies. |

@@ -103,6 +103,44 @@ describe.skipIf(process.platform === 'win32')('authenticateAuto logging', () => 
   });
 });
 
+// `auth parse-curl --login` hands the copied request to `authenticateBrowser()`.
+// The verifying auth.test call must already look like the browser, and the
+// saved profile must carry what is replayed on every later call.
+describe('browser login with a captured request', () => {
+  const originalFetch = globalThis.fetch;
+  let save: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    save = spyOn(workspaces, 'addWorkspace').mockResolvedValue('grid-z');
+  });
+
+  afterEach(() => {
+    save.mockRestore();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('verifies with the browser headers and cookies, then saves them', async () => {
+    const sent: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return Response.json({ ok: true, team_id: 'T0', team: 'Acme', user_id: 'U1', user: 'me' });
+    }) as unknown as typeof fetch;
+    const captured = {
+      cookie: 'b=fakeb; d=xoxd-FAKE',
+      request: { headers: { 'user-agent': 'UA/1' }, query: { fp: 'c7' }, form: { _x_mode: 'online' } },
+    };
+
+    const { config } = await authenticateBrowser(
+      'xoxd-FAKE', 'xoxc-FAKE', 'https://acme.slack.com', 'Acme', undefined, 'keychain', captured,
+    );
+
+    expect(sent[0].url).toBe('https://acme.slack.com/api/auth.test?fp=c7');
+    expect(sent[0].init.headers).toMatchObject({ 'user-agent': 'UA/1', cookie: 'b=fakeb; d=xoxd-FAKE' });
+    expect(config).toMatchObject({ cookie_header: captured.cookie, browser_request: captured.request });
+    expect(save).toHaveBeenCalledWith(config, undefined, 'keychain');
+  });
+});
+
 // A token Slack refuses at login was never stored, so the "log in again" advice
 // a stale profile gets would send the user round in a circle. Both login paths
 // fail before `addWorkspace()`, so nothing here touches the config file.
@@ -307,6 +345,32 @@ describe('login-auto when Slack refuses the saved session', () => {
       expect(result.failed).toEqual([]);
       expect(progress).toContain('The saved Slack session has expired. Sign in again in the browser window…');
       expect(stopped).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('saves a captured workspace with the browser request its token came from', async () => {
+    const sent: RequestInit[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sent.push(init);
+      return Response.json({ ok: true, team_id: 'T0', team: 'Acme Corp', user_id: 'U1', user: 'me' });
+    }) as unknown as typeof fetch;
+    const browserRequest = {
+      cookie: 'b=fakeb; d=xoxd-secretcookie',
+      request: { headers: { 'user-agent': 'UA/1' }, query: {}, form: {} },
+    };
+    const capture = captured(FRESH);
+    const { spy } = captureSequence({ ...capture, workspaces: [{ ...capture.workspaces[0], browserRequest }] });
+
+    try {
+      const result = await authenticateAuto();
+
+      expect((sent[0].headers as Record<string, string>).cookie).toBe(browserRequest.cookie);
+      expect(result.saved[0]).toMatchObject({
+        cookie_header: browserRequest.cookie,
+        browser_request: browserRequest.request,
+      });
     } finally {
       spy.mockRestore();
     }

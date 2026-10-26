@@ -22,6 +22,7 @@ import {
 import {
   FileSecretStore,
   MissingCredentialError,
+  RoutingSecretStore,
   SecretStoreError,
   metadataOf,
   type SecretStore,
@@ -601,6 +602,19 @@ describe('migrateWorkspaceCredentials', () => {
     expect(data.workspaces.T1).not.toHaveProperty('secret_backend');
   });
 
+  it('keeps the credentials inline when migrating back to file', async () => {
+    const data: WorkspacesData = {
+      workspaces: { T1: { ...metadataOf(standard()), secret_backend: 'keychain' } as WorkspaceConfig },
+    };
+    const keychain = new FakeKeychainStore();
+    keychain.secrets.set('T1:token', 'xoxb-abc');
+
+    await migrateOneWorkspace(data, backendsWith(data, keychain), 'T1', 'file', async () => {});
+
+    expect(data.workspaces.T1).toEqual(standard());
+    expect(keychain.secrets.size).toBe(0);
+  });
+
   it('throws for an unknown workspace', async () => {
     const data: WorkspacesData = { workspaces: {} };
     await expect(
@@ -726,6 +740,111 @@ describe('migrateOneWorkspace (save-then-cleanup sequencing)', () => {
     expect(result.pendingCleanup).toBeNull();
     expect(calls).toHaveLength(1); // only the cleanup save; no flip to save
     expect(data.workspaces.T1).not.toHaveProperty('secret_cleanup_pending');
+  });
+});
+
+describe('captured browser request (snapshot + Cookie header)', () => {
+  // A profile saved by `auth parse-curl --login`. Every value is fake.
+  const captured = (overrides: Partial<BrowserAuthConfig> = {}): BrowserAuthConfig => browser({
+    user_id: 'U1',
+    cookie_header: 'b=fakeb; d=xoxd-abc; lc=1',
+    browser_request: { headers: { 'user-agent': 'UA/1' }, query: { fp: 'c7' }, form: { _x_mode: 'online' } },
+    ...overrides,
+  });
+
+  // A keychain that records what was asked of it.
+  function recordingKeychain(): FakeKeychainStore & { ops: string[] } {
+    const keychain = Object.assign(new FakeKeychainStore(), { ops: [] as string[] });
+    for (const op of ['get', 'set', 'delete'] as const) {
+      const original = keychain[op].bind(keychain) as (key: string, value?: string) => Promise<any>;
+      (keychain as any)[op] = (key: string, value?: string) => {
+        keychain.ops.push(`${op} ${key}`);
+        return original(key, value);
+      };
+    }
+    return keychain;
+  }
+
+  it('keeps the snapshot as metadata and the Cookie header in the Keychain on a keychain profile', async () => {
+    const data: WorkspacesData = { workspaces: {} };
+    const keychain = new FakeKeychainStore();
+    const store = new RoutingSecretStore(data, keychain);
+
+    await putWorkspace(data, store, captured(), 'grid-z', 'keychain');
+
+    expect(data.workspaces['grid-z']).toHaveProperty('browser_request', captured().browser_request);
+    expect(JSON.stringify(data)).not.toContain('fakeb');
+    expect(keychain.secrets.get('grid-z:cookie')).toBe('b=fakeb; d=xoxd-abc; lc=1');
+    expect(await readWorkspace(data, store, 'grid-z')).toEqual({
+      ...captured(),
+      profile: 'grid-z',
+      secret_backend: 'keychain',
+    });
+  });
+
+  it('keeps both inline on a file profile', async () => {
+    const data: WorkspacesData = { workspaces: {} };
+    await putWorkspace(data, new FileSecretStore(data), captured());
+    expect(serialize(data)).toEqual({ default_workspace: 'T1', workspaces: { T1: captured() } });
+  });
+
+  it('drops the old Cookie header and snapshot when the session is refreshed without them', async () => {
+    const data: WorkspacesData = { workspaces: {} };
+    const keychain = new FakeKeychainStore();
+    const store = new RoutingSecretStore(data, keychain);
+    await putWorkspace(data, store, captured(), undefined, 'keychain');
+
+    await putWorkspace(data, store, browser({ user_id: 'U1', xoxd_token: 'xoxd-new' }));
+
+    expect(data.workspaces.T1).not.toHaveProperty('browser_request');
+    expect(keychain.secrets.has('T1:cookie')).toBe(false);
+    expect(await readWorkspace(data, store, 'T1')).toEqual(
+      browser({ user_id: 'U1', xoxd_token: 'xoxd-new', secret_backend: 'keychain' }),
+    );
+  });
+
+  it('makes exactly the calls it always made for a profile without a snapshot', async () => {
+    const data: WorkspacesData = { workspaces: {} };
+    const keychain = recordingKeychain();
+    const store = new RoutingSecretStore(data, keychain);
+
+    await putWorkspace(data, store, browser({ user_id: 'U1' }), undefined, 'keychain');
+    await putWorkspace(data, store, browser({ user_id: 'U1', xoxd_token: 'xoxd-new' }));
+    await readWorkspace(data, store, 'T1');
+
+    expect(keychain.ops).toEqual([
+      'set T1:xoxc', 'set T1:xoxd',
+      'set T1:xoxc', 'set T1:xoxd',
+      'get T1:xoxc', 'get T1:xoxd',
+    ]);
+  });
+
+  it('moves the Cookie header with the tokens on migrate-secrets, and leaves no inline copy', async () => {
+    const data: WorkspacesData = { workspaces: { T1: captured() } };
+    const keychain = new FakeKeychainStore();
+    const save = async () => {};
+
+    const result = await migrateOneWorkspace(data, backendsWith(data, keychain), 'T1', 'keychain', save);
+
+    expect(result).toMatchObject({ migrated: true, pendingCleanup: null });
+    expect(keychain.secrets.get('T1:cookie')).toBe('b=fakeb; d=xoxd-abc; lc=1');
+    expect(data.workspaces.T1).not.toHaveProperty('cookie_header');
+    expect(data.workspaces.T1).toHaveProperty('browser_request', captured().browser_request);
+    expect(await readWorkspace(data, new RoutingSecretStore(data, keychain), 'T1')).toEqual({
+      ...captured(),
+      secret_backend: 'keychain',
+    });
+  });
+
+  it('removes the Cookie header from the Keychain with the profile', async () => {
+    const data: WorkspacesData = { workspaces: {} };
+    const keychain = new FakeKeychainStore();
+    const store = new RoutingSecretStore(data, keychain);
+    await putWorkspace(data, store, captured(), undefined, 'keychain');
+
+    await dropWorkspace(data, store, 'T1');
+
+    expect(keychain.secrets.size).toBe(0);
   });
 });
 

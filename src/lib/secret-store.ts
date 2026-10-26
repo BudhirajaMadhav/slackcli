@@ -24,24 +24,39 @@ const logger = getLogger(['slackcli', 'secret-store']);
 // ---------------------------------------------------------------------------
 
 // The kinds of secret a workspace can hold. Standard auth has one token;
-// browser auth has the xoxc token plus the xoxd session cookie.
-export type CredentialKind = 'token' | 'xoxc' | 'xoxd';
+// browser auth has the xoxc token plus the xoxd session cookie, and — when the
+// session was captured with its browser's request — the full Cookie header
+// that request carried (`cookie`).
+export type CredentialKind = 'token' | 'xoxc' | 'xoxd' | 'cookie';
 
 export const CREDENTIAL_KINDS: Record<AuthType, readonly CredentialKind[]> = {
   standard: ['token'],
-  browser: ['xoxc', 'xoxd'],
+  browser: ['xoxc', 'xoxd', 'cookie'],
 };
 
 // Every kind, for cleaning up after a record whose auth_type is missing or
 // unknown (a hand-edited or damaged file) — deleting an absent kind is a no-op.
-const ALL_CREDENTIAL_KINDS: readonly CredentialKind[] = ['token', 'xoxc', 'xoxd'];
+const ALL_CREDENTIAL_KINDS: readonly CredentialKind[] = ['token', 'xoxc', 'xoxd', 'cookie'];
 
 // Where each kind lives on a WorkspaceConfig record.
-const CREDENTIAL_FIELDS: Record<CredentialKind, 'token' | 'xoxc_token' | 'xoxd_token'> = {
+const CREDENTIAL_FIELDS: Record<CredentialKind, 'token' | 'xoxc_token' | 'xoxd_token' | 'cookie_header'> = {
   token: 'token',
   xoxc: 'xoxc_token',
   xoxd: 'xoxd_token',
+  cookie: 'cookie_header',
 };
+
+// The kinds a stored record must hold. A browser profile has a Cookie header
+// only alongside the request snapshot it was captured with, so a profile
+// without one (every profile saved before it was kept) never looks it up —
+// no extra Keychain read, and no new way to fail.
+function requiredKinds(metadata: WorkspaceMetadata): readonly CredentialKind[] | undefined {
+  const kinds = CREDENTIAL_KINDS[metadata.auth_type] as readonly CredentialKind[] | undefined;
+  if (metadata.auth_type === 'browser' && !metadata.browser_request) {
+    return kinds?.filter((kind) => kind !== 'cookie');
+  }
+  return kinds;
+}
 
 // A backend stores opaque string secrets under string keys.
 //
@@ -106,7 +121,9 @@ export function parseSecretKey(key: string): { ref: string; kind: CredentialKind
 // Split a full config into the secrets it carries, keyed by kind.
 function credentialsOf(config: WorkspaceConfig): Array<[CredentialKind, string]> {
   if (config.auth_type === 'standard') return [['token', config.token]];
-  return [['xoxc', config.xoxc_token], ['xoxd', config.xoxd_token]];
+  const secrets: Array<[CredentialKind, string]> = [['xoxc', config.xoxc_token], ['xoxd', config.xoxd_token]];
+  if (config.cookie_header) secrets.push(['cookie', config.cookie_header]);
+  return secrets;
 }
 
 // The config with its secrets removed — what is safe to keep as metadata.
@@ -115,7 +132,7 @@ export function metadataOf(config: WorkspaceConfig): WorkspaceMetadata {
     const { token: _token, ...metadata } = config;
     return metadata;
   }
-  const { xoxc_token: _xoxc, xoxd_token: _xoxd, ...metadata } = config;
+  const { xoxc_token: _xoxc, xoxd_token: _xoxd, cookie_header: _cookie, ...metadata } = config;
   return metadata;
 }
 
@@ -137,7 +154,7 @@ export async function loadCredentials(
   ref: string,
   metadata: WorkspaceMetadata,
 ): Promise<WorkspaceConfig> {
-  const kinds = CREDENTIAL_KINDS[metadata.auth_type] as readonly CredentialKind[] | undefined;
+  const kinds = requiredKinds(metadata);
   if (!kinds) {
     throw new Error(
       `Profile "${ref}" has an unknown auth type (${String(metadata.auth_type)}). ` +
@@ -159,6 +176,7 @@ export async function loadCredentials(
     ...metadata,
     xoxc_token: secrets.xoxc as string,
     xoxd_token: secrets.xoxd as string,
+    ...(secrets.cookie === undefined ? {} : { cookie_header: secrets.cookie }),
   };
 }
 
@@ -178,7 +196,8 @@ export async function deleteCredentials(
 // ---------------------------------------------------------------------------
 // FileSecretStore: the legacy backend. Secrets live inline on the profile's
 // record in the loaded workspaces.json document, under the same field names as
-// always (`token`, `xoxc_token`, `xoxd_token`). It mutates the in-memory
+// always (`token`, `xoxc_token`, `xoxd_token`; the Cookie header as
+// `cookie_header`). It mutates the in-memory
 // document only; the caller persists it with saveWorkspaces(), which keeps the
 // file's 0600 mode and the one-write-per-command behaviour.
 // ---------------------------------------------------------------------------
@@ -232,7 +251,7 @@ export class FileSecretStore implements SecretStore {
 // visible to other processes on the same host via `ps`; that is a known,
 // documented limitation of the shell-out approach (see docs/user-guide), not
 // an oversight. Every item is stored under service "slackcli", account
-// `<profile key>:<token|xoxc|xoxd>` (secretKey()).
+// `<profile key>:<token|xoxc|xoxd|cookie>` (secretKey()).
 // ---------------------------------------------------------------------------
 
 const KEYCHAIN_SERVICE = 'slackcli';
@@ -399,5 +418,10 @@ export function credentialsMatch(a: WorkspaceConfig, b: WorkspaceConfig): boolea
   if (a.auth_type === 'standard') {
     return b.auth_type === 'standard' && a.token === b.token;
   }
-  return b.auth_type === 'browser' && a.xoxc_token === b.xoxc_token && a.xoxd_token === b.xoxd_token;
+  return (
+    b.auth_type === 'browser' &&
+    a.xoxc_token === b.xoxc_token &&
+    a.xoxd_token === b.xoxd_token &&
+    a.cookie_header === b.cookie_header
+  );
 }
